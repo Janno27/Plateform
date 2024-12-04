@@ -38,13 +38,7 @@ export function StatisticsPanel({
         transaction: testData?.analysisData?.raw_data?.transaction || []
       }
       
-      if (!dataToSend.overall.length) {
-        console.error('No overall data available')
-        return
-      }
-      
-      console.log('Overall data sample:', dataToSend.overall[0])
-      console.log('Transaction data sample:', dataToSend.transaction[0])
+      console.log('Sending data:', JSON.stringify(dataToSend, null, 2))
       
       const response = await fetch('http://localhost:8000/calculate-overview', {
         method: 'POST',
@@ -56,12 +50,17 @@ export function StatisticsPanel({
 
       if (!response.ok) {
         const errorData = await response.json()
-        console.error('Error response:', errorData)
+        console.error('Server error:', errorData)
         throw new Error(errorData.detail || 'Failed to fetch overview data')
       }
       
       const result = await response.json()
-      console.log('Received overview data:', result)
+      console.log('Received data:', JSON.stringify(result, null, 2))
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Invalid response format')
+      }
+
       setOverviewData(result)
     } catch (error) {
       console.error('Error fetching overview data:', error)
@@ -79,7 +78,7 @@ export function StatisticsPanel({
   return (
     <Card 
       className={cn(
-        "h-full", // Take full height of parent
+        "h-full",
         "transition-all duration-300",
         "data-[state=open]:animate-in data-[state=closed]:animate-out",
         "data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0",

@@ -187,43 +187,42 @@ async def calculate_overview(data: OverviewRequest):
         logger.info(f"Overall data length: {len(data.overall)}")
         logger.info(f"Transaction data length: {len(data.transaction)}")
         
+        # Log d'un échantillon des données
+        if data.overall:
+            logger.info(f"Sample overall data: {data.overall[0]}")
+        if data.transaction:
+            logger.info(f"Sample transaction data: {data.transaction[0]}")
+        
         if not data.overall:
             raise HTTPException(
                 status_code=400,
                 detail="Overall data is required"
             )
         
-        # Vérification des colonnes requises dans overall
-        required_columns = ['variation', 'users', 'sessions', 'user_add_to_carts']
-        overall_sample = data.overall[0] if data.overall else {}
-        missing_columns = [col for col in required_columns if col not in overall_sample]
-        if missing_columns:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Missing required columns in overall data: {missing_columns}"
-            )
-            
         processor = DataProcessor()
         try:
             result = processor.calculate_overview_metrics({
                 'overall': data.overall,
                 'transaction': data.transaction
             })
+            
+            if result['success']:
+                logger.info("Overview calculation successful")
+                return result
+            else:
+                logger.error(f"Overview calculation failed: {result.get('error')}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=result.get('error', 'Unknown error occurred')
+                )
+                
         except Exception as e:
             logger.error(f"Processor error: {str(e)}", exc_info=True)
             raise HTTPException(
                 status_code=500,
                 detail=f"Error processing data: {str(e)}"
             )
-        
-        if not result['success']:
-            raise HTTPException(
-                status_code=500,
-                detail=result['error']
-            )
             
-        return result
-        
     except HTTPException:
         raise
     except Exception as e:
