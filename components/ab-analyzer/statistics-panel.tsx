@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { RawDataTable } from "./raw-data-table"
+import { OverviewTable } from "./overview-table"
 
 interface StatisticsPanelProps {
   testData: any
@@ -26,6 +27,55 @@ export function StatisticsPanel({
   results,
   isCollapsed
 }: StatisticsPanelProps) {
+  const [overviewData, setOverviewData] = React.useState<any>(null)
+  const [isLoadingOverview, setIsLoadingOverview] = React.useState(false)
+
+  const fetchOverviewData = React.useCallback(async () => {
+    try {
+      setIsLoadingOverview(true)
+      const dataToSend = {
+        overall: testData?.analysisData?.raw_data?.overall || [],
+        transaction: testData?.analysisData?.raw_data?.transaction || []
+      }
+      
+      if (!dataToSend.overall.length) {
+        console.error('No overall data available')
+        return
+      }
+      
+      console.log('Overall data sample:', dataToSend.overall[0])
+      console.log('Transaction data sample:', dataToSend.transaction[0])
+      
+      const response = await fetch('http://localhost:8000/calculate-overview', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(dataToSend),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Error response:', errorData)
+        throw new Error(errorData.detail || 'Failed to fetch overview data')
+      }
+      
+      const result = await response.json()
+      console.log('Received overview data:', result)
+      setOverviewData(result)
+    } catch (error) {
+      console.error('Error fetching overview data:', error)
+    } finally {
+      setIsLoadingOverview(false)
+    }
+  }, [testData])
+
+  React.useEffect(() => {
+    if (testData?.analysisData?.raw_data?.overall) {
+      fetchOverviewData()
+    }
+  }, [testData, fetchOverviewData])
+
   return (
     <Card 
       className={cn(
@@ -49,8 +99,11 @@ export function StatisticsPanel({
         </div>
 
         <div className="flex-1 relative overflow-hidden">
-          <TabsContent value="overview" className="p-6 absolute inset-0">
-            Overview content
+          <TabsContent value="overview" className="p-6">
+            <OverviewTable 
+              data={overviewData} 
+              isLoading={isLoadingOverview}
+            />
           </TabsContent>
 
           <TabsContent value="engagement" className="p-6 absolute inset-0">

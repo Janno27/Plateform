@@ -175,3 +175,57 @@ async def test_aggregation():
             status_code=500,
             detail=f"Erreur lors du test d'agrégation: {str(e)}"
         )
+
+class OverviewRequest(BaseModel):
+    overall: List[Dict[str, Any]]
+    transaction: Optional[List[Dict[str, Any]]] = []
+
+@app.post("/calculate-overview")
+async def calculate_overview(data: OverviewRequest):
+    try:
+        logger.info("Received overview calculation request")
+        logger.info(f"Overall data length: {len(data.overall)}")
+        logger.info(f"Transaction data length: {len(data.transaction)}")
+        
+        if not data.overall:
+            raise HTTPException(
+                status_code=400,
+                detail="Overall data is required"
+            )
+        
+        # Vérification des colonnes requises dans overall
+        required_columns = ['variation', 'users', 'sessions', 'user_add_to_carts']
+        overall_sample = data.overall[0] if data.overall else {}
+        missing_columns = [col for col in required_columns if col not in overall_sample]
+        if missing_columns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required columns in overall data: {missing_columns}"
+            )
+            
+        processor = DataProcessor()
+        try:
+            result = processor.calculate_overview_metrics({
+                'overall': data.overall,
+                'transaction': data.transaction
+            })
+        except Exception as e:
+            logger.error(f"Processor error: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error processing data: {str(e)}"
+            )
+        
+        if not result['success']:
+            raise HTTPException(
+                status_code=500,
+                detail=result['error']
+            )
+            
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in calculate_overview: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
