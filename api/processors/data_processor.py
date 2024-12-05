@@ -208,15 +208,7 @@ class DataProcessor:
         return round(uplift, 2), round(confidence, 2)
 
     def calculate_overview_metrics(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Calcule uniquement les métriques essentielles : 
-        - Users (overall)
-        - Add to Cart Rate (overall)
-        - Transaction Rate (transaction)
-        - Revenue (transaction)
-        """
         try:
-            # Conversion des données en DataFrames
             overall_df = pd.DataFrame(data.get('overall', []))
             transaction_df = pd.DataFrame(data.get('transaction', []))
             
@@ -251,50 +243,66 @@ class DataProcessor:
                 var_transactions = transaction_df[transaction_df['variation'] == variation]
                 ctrl_transactions = transaction_df[transaction_df['variation'] == control_variation]
 
-                # Préparer les données pour les tests statistiques
-                ctrl_users = ctrl_overall['users'].values
-                var_users = var_overall['users'].values
-                
-                # Calcul des métriques de base
-                var_users_value = float(var_users[0])
-                ctrl_users_value = float(ctrl_users[0])
-                users_uplift = ((var_users_value - ctrl_users_value) / ctrl_users_value) * 100 if ctrl_users_value > 0 else 0
+                # 1. Users
+                var_users = float(var_overall['users'].iloc[0])
+                ctrl_users = float(ctrl_overall['users'].iloc[0])
+                users_uplift = ((var_users - ctrl_users) / ctrl_users) * 100 if ctrl_users > 0 else 0
+                # Calcul de la confiance pour users
+                _, users_confidence = stats.ttest_ind(
+                    [var_users], [ctrl_users],
+                    equal_var=False
+                )
+                users_confidence = (1 - users_confidence) * 100 if not np.isnan(users_confidence) else 0
 
-                # Add to Cart Rate
-                var_atc = var_overall['user_add_to_carts'].values
-                ctrl_atc = ctrl_overall['user_add_to_carts'].values
-                var_atc_rate = (var_atc[0] / var_users_value) * 100 if var_users_value > 0 else 0
-                ctrl_atc_rate = (ctrl_atc[0] / ctrl_users_value) * 100 if ctrl_users_value > 0 else 0
+                # 2. Add to Cart Rate
+                var_atc = float(var_overall['user_add_to_carts'].iloc[0])
+                ctrl_atc = float(ctrl_overall['user_add_to_carts'].iloc[0])
+                var_atc_rate = (var_atc / var_users) * 100 if var_users > 0 else 0
+                ctrl_atc_rate = (ctrl_atc / ctrl_users) * 100 if ctrl_users > 0 else 0
                 atc_uplift = ((var_atc_rate - ctrl_atc_rate) / ctrl_atc_rate) * 100 if ctrl_atc_rate > 0 else 0
+                # Calcul de la confiance pour Add to Cart
+                ctrl_atc_dist = np.repeat([0, 1], [ctrl_users - ctrl_atc, ctrl_atc])
+                var_atc_dist = np.repeat([0, 1], [var_users - var_atc, var_atc])
+                _, atc_confidence = stats.fisher_exact([
+                    [ctrl_atc, ctrl_users - ctrl_atc],
+                    [var_atc, var_users - var_atc]
+                ])
+                atc_confidence = (1 - atc_confidence) * 100
 
-                # Transaction Rate
+                # 3. Transaction Rate
                 var_trans_count = len(var_transactions['transaction_id'].unique())
                 ctrl_trans_count = len(ctrl_transactions['transaction_id'].unique())
-                var_trans_rate = (var_trans_count / var_users_value) * 100 if var_users_value > 0 else 0
-                ctrl_trans_rate = (ctrl_trans_count / ctrl_users_value) * 100 if ctrl_users_value > 0 else 0
+                var_trans_rate = (var_trans_count / var_users) * 100 if var_users > 0 else 0
+                ctrl_trans_rate = (ctrl_trans_count / ctrl_users) * 100 if ctrl_users > 0 else 0
                 trans_uplift = ((var_trans_rate - ctrl_trans_rate) / ctrl_trans_rate) * 100 if ctrl_trans_rate > 0 else 0
+                # Calcul de la confiance pour Transaction Rate
+                _, trans_confidence = stats.fisher_exact([
+                    [ctrl_trans_count, ctrl_users - ctrl_trans_count],
+                    [var_trans_count, var_users - var_trans_count]
+                ])
+                trans_confidence = (1 - trans_confidence) * 100
 
-                # Revenue
-                var_revenue = var_transactions.groupby('transaction_id')['revenue'].sum().values
-                ctrl_revenue = ctrl_transactions.groupby('transaction_id')['revenue'].sum().values
-                var_revenue_total = float(var_revenue.sum())
-                ctrl_revenue_total = float(ctrl_revenue.sum())
-                revenue_uplift = ((var_revenue_total - ctrl_revenue_total) / ctrl_revenue_total) * 100 if ctrl_revenue_total > 0 else 0
+                # 4. Revenue
+                var_revenue = float(var_transactions['revenue'].sum())
+                ctrl_revenue = float(ctrl_transactions['revenue'].sum())
+                revenue_uplift = ((var_revenue - ctrl_revenue) / ctrl_revenue) * 100 if ctrl_revenue > 0 else 0
+                # Calcul de la confiance pour Revenue avec Mann-Whitney
+                var_revenues = var_transactions['revenue'].values
+                ctrl_revenues = ctrl_transactions['revenue'].values
+                if len(var_revenues) > 0 and len(ctrl_revenues) > 0:
+                    _, revenue_confidence = stats.mannwhitneyu(
+                        var_revenues,
+                        ctrl_revenues,
+                        alternative='two-sided'
+                    )
+                    revenue_confidence = (1 - revenue_confidence) * 100
+                else:
+                    revenue_confidence = 0
 
-                # Calcul des niveaux de confiance
-                users_confidence = self.calculate_confidence(ctrl_users, var_users, 'normal')
-                atc_confidence = self.calculate_confidence(ctrl_atc / ctrl_users * 100, var_atc / var_users * 100, 'normal')
-                trans_confidence = self.calculate_confidence(
-                    np.array([ctrl_trans_rate]), 
-                    np.array([var_trans_rate]), 
-                    'normal'
-                )
-                revenue_confidence = self.calculate_confidence(ctrl_revenue, var_revenue, 'revenue')
-
-                # Stocker les résultats avec les niveaux de confiance
+                # Stocker les résultats avec les confiances
                 metrics['users'] = {
-                    'value': var_users_value,
-                    'control_value': ctrl_users_value,
+                    'value': var_users,
+                    'control_value': ctrl_users,
                     'uplift': round(users_uplift, 2),
                     'confidence': round(users_confidence, 2)
                 }
@@ -314,8 +322,8 @@ class DataProcessor:
                 }
                 
                 metrics['revenue'] = {
-                    'value': round(var_revenue_total, 2),
-                    'control_value': round(ctrl_revenue_total, 2),
+                    'value': round(var_revenue, 2),
+                    'control_value': round(ctrl_revenue, 2),
                     'uplift': round(revenue_uplift, 2),
                     'confidence': round(revenue_confidence, 2)
                 }

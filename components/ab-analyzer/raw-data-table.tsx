@@ -46,13 +46,18 @@ export function RawDataTable({ data }: RawDataTableProps) {
     'revenue'
   ]
 
-  const handleDatasetChange = async (checked: boolean) => {
+  const handleDatasetChange = (checked: boolean) => {
+    const newDataset = checked ? 'transaction' : 'overall'
+    
     setIsTransitioning(true)
-    await new Promise(resolve => setTimeout(resolve, 300))
-    setActiveDataset(checked ? 'transaction' : 'overall')
+    
     setAggregatedData(null)
     setIsAggregated(false)
-    setIsTransitioning(false)
+    
+    setTimeout(() => {
+      setActiveDataset(newDataset)
+      setIsTransitioning(false)
+    }, 300)
   }
 
   const handleAggregate = async () => {
@@ -121,9 +126,15 @@ export function RawDataTable({ data }: RawDataTableProps) {
     }))
   }
 
-  const currentData = activeDataset === 'transaction' && aggregatedData 
-    ? aggregatedData 
-    : data?.analysisData?.raw_data?.[activeDataset] || []
+  const currentData = React.useMemo(() => {
+    if (!data?.analysisData?.raw_data) return []
+    
+    if (activeDataset === 'transaction' && isAggregated && aggregatedData) {
+      return aggregatedData
+    }
+    
+    return data.analysisData.raw_data[activeDataset] || []
+  }, [data, activeDataset, isAggregated, aggregatedData])
 
   const columns = currentData[0] 
     ? isAggregated 
@@ -163,7 +174,7 @@ export function RawDataTable({ data }: RawDataTableProps) {
                 id="dataset-switch"
                 checked={activeDataset === 'transaction'}
                 onCheckedChange={handleDatasetChange}
-                disabled={isTransitioning}
+                disabled={!data?.analysisData?.raw_data || isTransitioning}
               />
               <Label htmlFor="dataset-switch">
                 {activeDataset === 'transaction' ? 'Transaction Data' : 'Overall Data'}
@@ -199,93 +210,97 @@ export function RawDataTable({ data }: RawDataTableProps) {
         </div>
 
         <div className="flex-1 relative overflow-hidden">
-          <div className="absolute inset-0 overflow-auto">
-            <div className="inline-block min-w-full align-middle">
-              <div className="relative">
-                {(isAggregating || isTransitioning) ? (
-                  renderSkeleton()
-                ) : (
-                  <Table className="w-full">
-                    <TableHeader>
-                      <TableRow className="sticky top-0 z-20 bg-background">
-                        {columns.map((column) => (
-                          <TableHead 
-                            key={column} 
-                            className={cn(
-                              "whitespace-nowrap bg-background border-b text-center",
-                              collapsedColumns[column] && "w-12 !p-0"
-                            )}
-                            style={{ position: 'sticky', top: 0 }}
-                          >
-                            <div className="flex items-center gap-2">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className={cn(
-                                  "h-8 p-1 hover:bg-muted",
-                                  collapsedColumns[column] && "w-full h-full rounded-none"
-                                )}
-                                onClick={() => toggleColumn(column)}
-                              >
-                                <ChevronDown 
-                                  className={cn(
-                                    "h-4 w-4 shrink-0 transition-transform",
-                                    collapsedColumns[column] && "-rotate-90"
-                                  )}
-                                />
-                                {!collapsedColumns[column] && (
-                                  <span className="ml-2">
-                                    {column.split('_').map(word => 
-                                      word.charAt(0).toUpperCase() + word.slice(1)
-                                    ).join(' ')}
-                                  </span>
-                                )}
-                              </Button>
-                            </div>
-                          </TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {currentData.map((row: any, index: number) => (
-                        <TableRow key={index}>
+          {isTransitioning ? (
+            renderSkeleton()
+          ) : (
+            <div className="absolute inset-0 overflow-auto">
+              <div className="inline-block min-w-full align-middle">
+                <div className="relative">
+                  {(isAggregating || isTransitioning) ? (
+                    renderSkeleton()
+                  ) : (
+                    <Table className="w-full">
+                      <TableHeader>
+                        <TableRow className="sticky top-0 z-20 bg-background">
                           {columns.map((column) => (
-                            <TableCell 
-                              key={column}
+                            <TableHead 
+                              key={column} 
                               className={cn(
-                                "transition-all text-center px-4 py-2",
-                                collapsedColumns[column] && "w-12 !p-2"
+                                "whitespace-nowrap bg-background border-b text-center",
+                                collapsedColumns[column] && "w-12 !p-0"
                               )}
+                              style={{ position: 'sticky', top: 0 }}
                             >
-                              <div className={cn(
-                                "transition-all",
-                                collapsedColumns[column] ? "opacity-0" : "opacity-100"
-                              )}>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className="cursor-help inline-block px-2 py-1 hover:bg-muted/50 rounded">
-                                      {formatCellValue(row[column])}
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className={cn(
+                                    "h-8 p-1 hover:bg-muted",
+                                    collapsedColumns[column] && "w-full h-full rounded-none"
+                                  )}
+                                  onClick={() => toggleColumn(column)}
+                                >
+                                  <ChevronDown 
+                                    className={cn(
+                                      "h-4 w-4 shrink-0 transition-transform",
+                                      collapsedColumns[column] && "-rotate-90"
+                                    )}
+                                  />
+                                  {!collapsedColumns[column] && (
+                                    <span className="ml-2">
+                                      {column.split('_').map(word => 
+                                        word.charAt(0).toUpperCase() + word.slice(1)
+                                      ).join(' ')}
                                     </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent 
-                                    side="top" 
-                                    align="center"
-                                    className="max-w-[300px] break-words bg-popover px-3 py-1.5 text-sm text-popover-foreground shadow-md"
-                                  >
-                                    {row[column]?.toString()}
-                                  </TooltipContent>
-                                </Tooltip>
+                                  )}
+                                </Button>
                               </div>
-                            </TableCell>
+                            </TableHead>
                           ))}
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
+                      </TableHeader>
+                      <TableBody>
+                        {currentData.map((row: any, index: number) => (
+                          <TableRow key={index}>
+                            {columns.map((column) => (
+                              <TableCell 
+                                key={column}
+                                className={cn(
+                                  "transition-all text-center px-4 py-2",
+                                  collapsedColumns[column] && "w-12 !p-2"
+                                )}
+                              >
+                                <div className={cn(
+                                  "transition-all",
+                                  collapsedColumns[column] ? "opacity-0" : "opacity-100"
+                                )}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="cursor-help inline-block px-2 py-1 hover:bg-muted/50 rounded">
+                                        {formatCellValue(row[column])}
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent 
+                                      side="top" 
+                                      align="center"
+                                      className="max-w-[300px] break-words bg-popover px-3 py-1.5 text-sm text-popover-foreground shadow-md"
+                                    >
+                                      {row[column]?.toString()}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </div>
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </TooltipProvider>
