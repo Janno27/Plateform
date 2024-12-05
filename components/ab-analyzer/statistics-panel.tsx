@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { RawDataTable } from "./raw-data-table"
 import { OverviewTable } from "./overview-table"
+import { RevenueAnalysis } from "./revenue-analysis"
 
 interface StatisticsPanelProps {
   testData: any
@@ -97,12 +98,14 @@ export function StatisticsPanel({
           </TabsList>
         </div>
 
-        <div className="flex-1 relative overflow-hidden">
-          <TabsContent value="overview" className="p-6">
-            <OverviewTable 
-              data={overviewData} 
-              isLoading={isLoadingOverview}
-            />
+        <div className="flex-1 relative overflow-auto">
+          <TabsContent value="overview" className="p-6 absolute inset-0">
+            <div className="h-full overflow-auto">
+              <OverviewTable 
+                data={overviewData} 
+                isLoading={isLoadingOverview}
+              />
+            </div>
           </TabsContent>
 
           <TabsContent value="engagement" className="p-6 absolute inset-0">
@@ -114,7 +117,12 @@ export function StatisticsPanel({
           </TabsContent>
 
           <TabsContent value="revenue" className="p-6 absolute inset-0">
-            Revenue content
+            <div className="h-full overflow-auto">
+              <RevenueAnalysis 
+                data={testData} 
+                isLoading={isLoadingOverview}
+              />
+            </div>
           </TabsContent>
 
           <TabsContent 

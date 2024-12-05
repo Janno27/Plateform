@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowUpIcon, ArrowDownIcon, InfoIcon } from "lucide-react"
+import { ArrowUpIcon, ArrowDownIcon, InfoIcon, AlertCircle, TrendingUp, BarChart3, Info } from "lucide-react"
 import {
   Tooltip,
   TooltipContent,
@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Search } from "lucide-react"
+import { ConfidenceTooltip } from "./confidence-tooltip"
 
 interface OverviewTableProps {
   data: any
@@ -53,20 +54,20 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
 
   const getUpliftTooltip = (metricKey: MetricKey) => {
     const tooltips: Record<MetricKey, string> = {
-      users: "Différence relative du nombre d'utilisateurs entre la variation et le contrôle",
-      add_to_cart_rate: "Différence relative du taux d'ajout au panier entre la variation et le contrôle",
-      transaction_rate: "Différence relative du taux de conversion entre la variation et le contrôle",
-      revenue: "Différence relative du revenu moyen par utilisateur entre la variation et le contrôle"
+      users: "Difference relative of the number of users between the variation and the control",
+      add_to_cart_rate: "Difference relative of the add-to-cart rate between the variation and the control",
+      transaction_rate: "Difference relative of the conversion rate between the variation and the control",
+      revenue: "Difference relative of the average revenue per user between the variation and the control"
     };
     return tooltips[metricKey];
   };
 
   const getConfidenceTooltip = (metricKey: MetricKey) => {
     const tooltips: Record<MetricKey, string> = {
-      users: "Test t de Student : Compare les moyennes de deux échantillons indépendants",
-      add_to_cart_rate: "Test exact de Fisher : Compare les proportions entre deux groupes indépendants",
-      transaction_rate: "Test exact de Fisher : Compare les proportions entre deux groupes indépendants",
-      revenue: "Test de Mann-Whitney U : Compare les distributions de deux échantillons indépendants (adapté aux données non normales)"
+      users: "Student's t-test: Compares means between two independent samples",
+      add_to_cart_rate: "Fisher's exact test: Compares proportions between two independent groups",
+      transaction_rate: "Fisher's exact test: Compares proportions between two independent groups",
+      revenue: "Mann-Whitney U test: Compares distributions between two independent samples (suitable for non-normal data)"
     };
     return tooltips[metricKey];
   };
@@ -209,6 +210,46 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
     return value === Math.max(...values);
   };
 
+  const renderOutliersTooltip = () => (
+    <div className="w-[350px] max-w-[90vw] p-4 text-left">
+      <div className="flex items-center gap-2 pb-3 mb-3 border-b border-border">
+        <BarChart3 className="h-5 w-5 text-primary shrink-0" />
+        <h4 className="font-semibold text-foreground">Outliers Statistics</h4>
+      </div>
+      <div className="space-y-4">
+        {getOutliersStats && Object.entries(getOutliersStats).map(([variation, stats]) => (
+          <div key={variation} className="space-y-1">
+            <span className="font-medium text-foreground">{variation}</span>
+            <div className="text-sm text-muted-foreground">
+              {stats.outliers} outliers out of {stats.total} metrics
+              <span className="ml-1 text-foreground">
+                ({((stats.outliers / stats.total) * 100).toFixed(1)}%)
+              </span>
+            </div>
+          </div>
+        ))}
+        <div className="pt-3 mt-1 border-t border-border">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Outliers are detected using the Interquartile Range (IQR) method.
+            A value is considered an outlier if it falls outside [Q1 - 1.5*IQR, Q3 + 1.5*IQR].
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+
+  const renderConfidenceTooltip = (metricKey: MetricKey, metricsData: any) => (
+    <ConfidenceTooltip
+      title={getConfidenceTooltip(metricKey)}
+      description={getConfidenceTooltip(metricKey)}
+      confidenceInterval={{
+        lower: metricsData.confidence_interval?.lower || 0,
+        upper: metricsData.confidence_interval?.upper || 0,
+        metric: metrics.find(m => m.key === metricKey)?.label || ''
+      }}
+    />
+  )
+
   return (
     <div className="space-y-4 px-6">
       <div className="flex justify-end">
@@ -216,31 +257,18 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
           <TooltipProvider>
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>
-                <div className="flex items-center gap-1 cursor-help text-muted-foreground">
-                  <InfoIcon className="h-4 w-4" />
-                  <span className="text-sm">Statistiques des outliers</span>
+                <div className="flex items-center gap-1 cursor-help text-muted-foreground hover:text-muted-foreground/80 transition-colors">
+                  <Info className="h-4 w-4" />
+                  <span className="text-sm">Outliers Statistics</span>
                 </div>
               </TooltipTrigger>
               <TooltipContent 
                 side="left"
-                className="bg-popover/95 backdrop-blur-sm border-muted p-4 max-w-[300px]"
+                align="start"
+                className="p-0 bg-popover border-border shadow-lg"
+                sideOffset={5}
               >
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Distribution des outliers par variation :</p>
-                  {getOutliersStats && Object.entries(getOutliersStats).map(([variation, stats]) => (
-                    <div key={variation} className="text-sm">
-                      <span className="font-medium">{variation}</span>
-                      <div className="text-muted-foreground">
-                        {stats.outliers} outliers sur {stats.total} métriques
-                        ({((stats.outliers / stats.total) * 100).toFixed(1)}%)
-                      </div>
-                    </div>
-                  ))}
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Les outliers sont détectés en utilisant la méthode de l'écart interquartile (IQR).
-                    Une valeur est considérée comme outlier si elle est en dehors de [Q1 - 1.5*IQR, Q3 + 1.5*IQR].
-                  </p>
-                </div>
+                {renderOutliersTooltip()}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -251,7 +279,7 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
               checked={removeOutliers}
               onCheckedChange={setRemoveOutliers}
             />
-            <Label htmlFor="remove-outliers">Exclure les outliers</Label>
+            <Label htmlFor="remove-outliers">Exclude outliers</Label>
           </div>
         </div>
       </div>
@@ -292,46 +320,32 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
                           <TooltipProvider>
                             <Tooltip delayDuration={0}>
                               <TooltipTrigger asChild>
-                                <div className={cn(
-                                  "text-sm flex items-center justify-end gap-1 cursor-help transition-colors",
-                                  getUpliftColor(metrics_data[metric.key].uplift)
-                                )}>
-                                  {metrics_data[metric.key].uplift > 0 ? (
-                                    <ArrowUpIcon className="h-4 w-4" />
-                                  ) : (
-                                    <ArrowDownIcon className="h-4 w-4" />
-                                  )}
-                                  {formatValue(metrics_data[metric.key].uplift, 'uplift')}
-                                </div>
-                              </TooltipTrigger>
-                              <TooltipContent 
-                                side="left" 
-                                className="bg-popover/95 backdrop-blur-sm border-muted"
-                              >
-                                <p className="max-w-[250px] text-sm">
-                                  {getUpliftTooltip(metric.key as MetricKey)}
-                                </p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                          <TooltipProvider>
-                            <Tooltip delayDuration={0}>
-                              <TooltipTrigger asChild>
-                                <div className="text-xs text-muted-foreground cursor-help hover:text-muted-foreground/80 transition-colors">
-                                  Stats : {
-                                    metrics_data[metric.key].confidence 
-                                      ? formatValue(metrics_data[metric.key].confidence, 'confidence')
-                                      : '-'
-                                  }
+                                <div className="space-y-1.5">
+                                  <div className={cn(
+                                    "text-sm flex items-center justify-end gap-1 cursor-help transition-colors",
+                                    getUpliftColor(metrics_data[metric.key].uplift)
+                                  )}>
+                                    {metrics_data[metric.key].uplift > 0 ? (
+                                      <ArrowUpIcon className="h-4 w-4" />
+                                    ) : (
+                                      <ArrowDownIcon className="h-4 w-4" />
+                                    )}
+                                    {formatValue(metrics_data[metric.key].uplift, 'uplift')}
+                                  </div>
+                                  <div className={cn(
+                                    "text-xs text-muted-foreground hover:text-muted-foreground/80 transition-colors"
+                                  )}>
+                                    Stats : {formatValue(metrics_data[metric.key].confidence, 'confidence')}
+                                  </div>
                                 </div>
                               </TooltipTrigger>
                               <TooltipContent 
                                 side="left"
-                                className="bg-popover/95 backdrop-blur-sm border-muted"
+                                align="start"
+                                className="p-4 bg-popover border-border shadow-lg"
+                                sideOffset={5}
                               >
-                                <p className="max-w-[250px] text-sm">
-                                  {getConfidenceTooltip(metric.key as MetricKey)}
-                                </p>
+                                {renderConfidenceTooltip(metric.key as MetricKey, metrics_data)}
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
