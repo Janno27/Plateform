@@ -230,51 +230,14 @@ async def calculate_overview(data: OverviewRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/calculate-revenue")
-async def calculate_revenue(data: OverviewRequest):
+async def calculate_revenue(data: dict):
     try:
-        logger.info("Received revenue calculation request")
-        logger.info(f"Overall data length: {len(data.overall)}")
-        logger.info(f"Transaction data length: {len(data.transaction)}")
-        
-        # Log des échantillons de données
-        if data.overall:
-            logger.info(f"Sample overall data: {data.overall[0]}")
-        if data.transaction:
-            logger.info(f"Sample transaction data: {data.transaction[0]}")
-        
-        if not data.overall or not data.transaction:
-            raise HTTPException(
-                status_code=400,
-                detail="Both overall and transaction data are required"
-            )
-        
         processor = DataProcessor()
-        try:
-            result = processor.calculate_revenue_metrics({
-                'overall': data.overall,
-                'transaction': data.transaction
-            })
-            
-            logger.info(f"Revenue calculation result: {result}")
-            
-            if result['success']:
-                return result
-            else:
-                logger.error(f"Revenue calculation failed: {result.get('error')}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=result.get('error', 'Unknown error occurred')
-                )
-                
-        except Exception as e:
-            logger.error(f"Processor error: {str(e)}", exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error processing data: {str(e)}"
-            )
-            
-    except HTTPException:
-        raise
+        result = processor.calculate_revenue_metrics(data)
+        return result
     except Exception as e:
-        logger.error(f"Error in calculate_revenue: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error in calculate_revenue endpoint: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )

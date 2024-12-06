@@ -29,6 +29,42 @@ interface OverviewTableProps {
   isLoading: boolean
 }
 
+// Type pour les métriques
+type MetricKey = 'users' | 'add_to_cart_rate' | 'transaction_rate' | 'revenue';
+
+const STATISTICAL_METHODOLOGY = {
+  users: {
+    test: "Student's t-test",
+    description: "Compares the mean number of users between variations. Assumes normal distribution due to large sample size (Central Limit Theorem).",
+    implementation: "stats.ttest_ind() with equal_var=False (Welch's t-test)"
+  },
+  add_to_cart_rate: {
+    test: "Fisher's Exact Test",
+    description: "Compares add to cart rates between variations. Ideal for binary outcomes (added vs not added).",
+    implementation: "stats.fisher_exact() for precise probability calculation"
+  },
+  transaction_rate: {
+    test: "Fisher's Exact Test",
+    description: "Compares conversion rates between variations. Ideal for binary outcomes (converted vs not converted).",
+    implementation: "stats.fisher_exact() for precise probability calculation"
+  },
+  revenue: {
+    test: "Mann-Whitney U Test",
+    description: "Non-parametric test comparing revenue distributions. Robust against typical revenue data skewness.",
+    implementation: "stats.mannwhitneyu() with alternative='two-sided'"
+  }
+}
+
+const getConfidenceLevel = (confidence: number): { label: string, color: string } => {
+  if (confidence >= 95) {
+    return { label: 'Statistically Significant', color: 'text-green-500' }
+  }
+  if (confidence >= 90) {
+    return { label: 'Partially Significant', color: 'text-yellow-500' }
+  }
+  return { label: 'Not Significant', color: 'text-muted-foreground' }
+}
+
 export function OverviewTable({ data, isLoading }: OverviewTableProps) {
   const [removeOutliers, setRemoveOutliers] = React.useState(false)
   const [processedData, setProcessedData] = React.useState<any>(null)
@@ -240,12 +276,17 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
 
   const renderConfidenceTooltip = (metricKey: MetricKey, metricsData: any) => (
     <ConfidenceTooltip
-      title={getConfidenceTooltip(metricKey)}
-      description={getConfidenceTooltip(metricKey)}
+      title={STATISTICAL_METHODOLOGY[metricKey].test}
+      description={STATISTICAL_METHODOLOGY[metricKey].description}
+      methodUsed={STATISTICAL_METHODOLOGY[metricKey].implementation}
       confidenceInterval={{
         lower: metricsData.confidence_interval?.lower || 0,
         upper: metricsData.confidence_interval?.upper || 0,
         metric: metrics.find(m => m.key === metricKey)?.label || ''
+      }}
+      confidenceData={{
+        value: metricsData.confidence || 0,
+        level: getConfidenceLevel(metricsData.confidence || 0)
       }}
     />
   )
@@ -345,7 +386,7 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
                                 className="p-4 bg-popover border-border shadow-lg"
                                 sideOffset={5}
                               >
-                                {renderConfidenceTooltip(metric.key as MetricKey, metrics_data)}
+                                {renderConfidenceTooltip(metric.key as MetricKey, metrics_data[metric.key])}
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
