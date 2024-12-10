@@ -99,10 +99,6 @@ class DataProcessor:
             raise
 
     def aggregate_transactions(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Agrège les données de transaction par transaction_id.
-        Groupe et concatène toutes les informations des colonnes tout en sommant les valeurs numériques.
-        """
         try:
             # Conversion en DataFrame
             df = pd.DataFrame(data)
@@ -110,56 +106,77 @@ class DataProcessor:
                 logger.warning("Aucune donnée à agréger")
                 return []
 
-            # Obtenir la liste des colonnes disponibles
-            columns = df.columns.tolist()
-            
-            # Définir les colonnes numériques
-            numeric_columns = ['quantity', 'revenue']
+            # Convertir les colonnes numériques en type numérique
+            df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce')
+            df['revenue'] = pd.to_numeric(df['revenue'], errors='coerce')
+
+            # Créer une colonne pour le nombre de produits uniques
+            df['unique_products'] = 1
+
             # Définir les colonnes à garder la première valeur
             first_value_columns = ['variation', 'device_category']
+            
             # Définir les colonnes à concaténer
             concat_columns = ['item_category2', 'item_name', 'item_bundle', 'item_name_simple']
-            
-            # Créer le dictionnaire d'agrégation dynamiquement
-            agg_dict = {}
-            
-            # Pour chaque colonne, déterminer la méthode d'agrégation
-            for col in columns:
-                if col == 'transaction_id':
-                    continue
-                elif col in numeric_columns:
-                    agg_dict[col] = 'sum'
-                elif col in first_value_columns:
-                    agg_dict[col] = 'first'
-                elif col in concat_columns:
-                    agg_dict[col] = lambda x: ' | '.join(sorted(set(str(i) for i in x if pd.notna(i) and str(i).strip())))
-                else:
-                    # Pour toute autre colonne, garder la première valeur
-                    agg_dict[col] = 'first'
 
-            # Grouper les transactions
+            # Créer le dictionnaire d'agrégation
+            agg_dict = {
+                'revenue': 'sum',
+                'quantity': 'sum',
+                'unique_products': 'count',  # Compte le nombre de produits uniques
+                **{col: 'first' for col in first_value_columns},
+                **{col: lambda x: self._limit_concatenated_items(x) for col in concat_columns}
+            }
+
+            # Grouper par transaction_id
             grouped = df.groupby('transaction_id').agg(agg_dict).reset_index()
 
-            # Nettoyage des valeurs numériques
-            for col in numeric_columns:
-                if col in grouped.columns:
-                    grouped[col] = pd.to_numeric(grouped[col], errors='coerce').fillna(0).round(2)
+            # Ajouter une colonne pour afficher le nombre total de produits
+            grouped['products_summary'] = grouped.apply(
+                lambda row: f"{int(row['unique_products'])} produit{'s' if row['unique_products'] > 1 else ''} ({int(row['quantity'])} unité{'s' if row['quantity'] > 1 else ''})", 
+                axis=1
+            )
 
-            # Log des résultats pour debugging
-            logger.info(f"Nombre d'enregistrements avant agrégation: {len(df)}")
-            logger.info(f"Nombre d'enregistrements après agrégation: {len(grouped)}")
-            logger.info(f"Colonnes agrégées: {list(agg_dict.keys())}")
-
-            # Afficher un exemple de résultat pour debugging
-            if not grouped.empty:
-                logger.info("Premier enregistrement agrégé :")
-                logger.info(grouped.iloc[0].to_dict())
-
-            return grouped.to_dict('records')
+            # Arrondir les valeurs numériques
+            grouped['revenue'] = grouped['revenue'].round(2)
+            
+            # Nettoyer le résultat final
+            result = grouped.to_dict('records')
+            
+            # Log pour debugging
+            logger.info(f"Transaction agrégée exemple: {result[0] if result else 'Aucun résultat'}")
+            
+            return result
 
         except Exception as e:
             logger.error(f"Erreur lors de l'agrégation des transactions: {str(e)}", exc_info=True)
             raise
+
+    def _limit_concatenated_items(self, items, max_items: int = 3) -> str:
+        """
+        Limite le nombre d'éléments concaténés et ajoute un compteur si nécessaire.
+        
+        Args:
+            items: Série de valeurs à concaténer
+            max_items: Nombre maximum d'éléments à afficher
+            
+        Returns:
+            str: Chaîne concaténée avec compteur si nécessaire
+        """
+        try:
+            # Filtrer les valeurs non nulles et uniques
+            unique_items = sorted(set(str(i) for i in items if pd.notna(i) and str(i).strip()))
+            
+            # Si le nombre d'éléments est inférieur ou égal à max_items, retourner tous les éléments
+            if len(unique_items) <= max_items:
+                return ' | '.join(unique_items)
+            
+            # Sinon, retourner les premiers éléments avec un compteur
+            return f"{' | '.join(unique_items[:max_items])} (+{len(unique_items) - max_items} autres)"
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la limitation des éléments concaténés: {str(e)}")
+            return ""
 
     def calculate_uplift_and_confidence(
         self, 
@@ -207,112 +224,93 @@ class DataProcessor:
         
         return round(uplift, 2), round(confidence, 2)
 
+    def _validate_input_data(self, data: Dict[str, Any]) -> None:
+        """Valide la structure des données d'entrée"""
+        if not data.get('raw_data'):
+            raise ValueError("Missing raw_data in input")
+        if not data['raw_data'].get('transaction'):
+            raise ValueError("Missing transaction data")
+        if not data['raw_data'].get('overall'):
+            raise ValueError("Missing overall data")
+
     def calculate_overview_metrics(self, data: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            overall_df = pd.DataFrame(data.get('overall', []))
-            transaction_df = pd.DataFrame(data.get('transaction', []))
+            self._validate_input_data(data)
             
-            if overall_df.empty:
-                raise ValueError("Overall data is required")
+            # Créer la table virtuelle
+            virtual_table = self.create_analysis_table(data)
+            overall_df = pd.DataFrame(data['raw_data']['overall'])
 
-            # Conversion des colonnes numériques
-            numeric_columns = ['users', 'user_add_to_carts', 'user_purchases', 'revenue']
-            for col in numeric_columns:
-                if col in overall_df.columns:
-                    overall_df[col] = pd.to_numeric(overall_df[col], errors='coerce')
-            
-            if not transaction_df.empty:
-                transaction_df['revenue'] = pd.to_numeric(transaction_df['revenue'], errors='coerce')
-            
             # Identifier le contrôle
-            control_mask = overall_df['variation'].str.contains('control', case=False, na=False)
-            if not control_mask.any():
-                raise ValueError("No control variation found")
-            control_variation = overall_df[control_mask]['variation'].iloc[0]
+            control_variation = str(overall_df[overall_df['variation'].str.contains('control', case=False)]['variation'].iloc[0])
 
-            # Récupérer les données du contrôle
-            ctrl_overall = overall_df[overall_df['variation'] == control_variation].iloc[0]
-
-            results = {}
-            variations = overall_df['variation'].unique()
-
-            for variation in variations:
-                if variation == control_variation:
-                    continue
-
-                # Récupérer les données de la variation
+            metrics_by_variation = {}
+            for variation in overall_df['variation'].unique():
+                # Filtrer les données pour cette variation
+                var_data = virtual_table[virtual_table['variation'] == variation]
+                ctrl_data = virtual_table[virtual_table['variation'] == control_variation]
+                
+                # Données overall pour cette variation
                 var_overall = overall_df[overall_df['variation'] == variation].iloc[0]
-                metrics = {}
+                ctrl_overall = overall_df[overall_df['variation'] == control_variation].iloc[0]
 
-                # Users
-                var_users = var_overall['users']
-                ctrl_users = ctrl_overall['users']
-                metrics['users'] = self._calculate_metric_stats(
-                    var_users,
-                    ctrl_users,
-                    'users',
-                    [var_users],
-                    [ctrl_users]
-                )
+                # Calculer les métriques
+                metrics = {
+                    'users': {
+                        'value': float(var_overall['users']),
+                        'control_value': float(ctrl_overall['users']),
+                        'uplift': ((float(var_overall['users']) - float(ctrl_overall['users'])) / float(ctrl_overall['users'])) * 100
+                    },
+                    'add_to_cart_rate': {
+                        'value': (float(var_overall['user_add_to_carts']) / float(var_overall['users'])) * 100,
+                        'control_value': (float(ctrl_overall['user_add_to_carts']) / float(ctrl_overall['users'])) * 100,
+                        'uplift': (((float(var_overall['user_add_to_carts']) / float(var_overall['users'])) - 
+                                  (float(ctrl_overall['user_add_to_carts']) / float(ctrl_overall['users']))) / 
+                                 (float(ctrl_overall['user_add_to_carts']) / float(ctrl_overall['users']))) * 100,
+                        'confidence': self._calculate_add_to_cart_confidence(
+                            float(var_overall['user_add_to_carts']), 
+                            float(var_overall['users']),
+                            float(ctrl_overall['user_add_to_carts']), 
+                            float(ctrl_overall['users'])
+                        ),
+                        'confidence_interval': self._calculate_add_to_cart_confidence_interval(
+                            float(var_overall['user_add_to_carts']), 
+                            float(var_overall['users']),
+                            float(ctrl_overall['user_add_to_carts']), 
+                            float(ctrl_overall['users'])
+                        ),
+                        'details': {
+                            'variation': {
+                                'count': int(float(var_overall['user_add_to_carts'])),
+                                'total': int(float(var_overall['users'])),
+                                'rate': (float(var_overall['user_add_to_carts']) / float(var_overall['users'])) * 100,
+                                'unit': 'percentage'
+                            },
+                            'control': {
+                                'count': int(float(ctrl_overall['user_add_to_carts'])),
+                                'total': int(float(ctrl_overall['users'])), 
+                                'rate': (float(ctrl_overall['user_add_to_carts']) / float(ctrl_overall['users'])) * 100,
+                                'unit': 'percentage'
+                            }
+                        }
+                    },
+                    'transaction_rate': self._calculate_transaction_rate(var_data, ctrl_data, var_overall, ctrl_overall),
+                    'total_revenue': self._calculate_total_revenue(var_data, ctrl_data)
+                }
 
-                # Add to Cart Rate
-                var_atc = var_overall['user_add_to_carts']
-                ctrl_atc = ctrl_overall['user_add_to_carts']
-                var_atc_rate = (var_atc / var_users) * 100
-                ctrl_atc_rate = (ctrl_atc / ctrl_users) * 100
-                
-                metrics['add_to_cart_rate'] = self._calculate_metric_stats(
-                    var_atc_rate,
-                    ctrl_atc_rate,
-                    'rate',
-                    [var_atc, var_users],
-                    [ctrl_atc, ctrl_users]
-                )
-
-                # Transaction Rate
-                var_trans = var_overall['user_purchases']
-                ctrl_trans = ctrl_overall['user_purchases']
-                var_trans_rate = (var_trans / var_users) * 100
-                ctrl_trans_rate = (ctrl_trans / ctrl_users) * 100
-                
-                metrics['transaction_rate'] = self._calculate_metric_stats(
-                    var_trans_rate,
-                    ctrl_trans_rate,
-                    'rate',
-                    [var_trans, var_users],
-                    [ctrl_trans, ctrl_users]
-                )
-
-                # Revenue
-                var_revenue = var_overall['revenue']
-                ctrl_revenue = ctrl_overall['revenue']
-                
-                # Pour le revenue, utiliser les données de transaction pour l'intervalle de confiance
-                var_trans_revenue = transaction_df[transaction_df['variation'] == variation]['revenue'].values
-                ctrl_trans_revenue = transaction_df[transaction_df['variation'] == control_variation]['revenue'].values
-                
-                metrics['revenue'] = self._calculate_metric_stats(
-                    var_revenue,
-                    ctrl_revenue,
-                    'revenue',
-                    var_trans_revenue,
-                    ctrl_trans_revenue
-                )
-
-                results[variation] = metrics
+                metrics = self._convert_numpy_types(metrics)
+                metrics_by_variation[str(variation)] = metrics
 
             return {
                 'success': True,
-                'data': results,
-                'control': control_variation
+                'data': metrics_by_variation,
+                'control': control_variation,
+                'virtual_table': virtual_table.to_dict('records')
             }
 
         except Exception as e:
-            logger.error(f"Error calculating overview metrics: {str(e)}", exc_info=True)
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            logger.error(f"Error calculating overview metrics: {str(e)}")
+            return {'success': False, 'error': str(e)}
 
     def calculate_confidence(self, control_data: np.array, variation_data: np.array, metric_type: str = 'normal') -> float:
         """
@@ -353,351 +351,902 @@ class DataProcessor:
             return 0.0
 
     def calculate_revenue_metrics(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Calcule les métriques de revenu avec optimisation des performances."""
         try:
-            # 1. Préparation efficace des DataFrames
-            dtypes = {
-                'users': 'float64',
-                'revenue': 'float64',
-                'quantity': 'float64',
-                'user_add_to_carts': 'float64',
-                'user_begin_checkouts': 'float64',
-                'user_purchases': 'float64',
-                'purchases': 'float64',
-                'sessions': 'float64',
-            }
-
-            # Convertir directement les données avec les types appropriés
-            overall_df = pd.DataFrame(data.get('overall', []))
-            transaction_df = pd.DataFrame(data.get('transaction', []))
-
-            # 2. Conversion optimisée des types
-            for col in overall_df.columns:
-                if col in dtypes:
-                    overall_df[col] = pd.to_numeric(overall_df[col], errors='coerce')
-
-            for col in transaction_df.columns:
-                if col in dtypes:
-                    transaction_df[col] = pd.to_numeric(transaction_df[col], errors='coerce')
-
-            # 3. Vérification rapide des données requises
-            if overall_df.empty or transaction_df.empty:
-                raise ValueError("Both overall and transaction data are required")
-
-            # 4. Identification optimisée du contrôle
-            control_variation = overall_df[
-                overall_df['variation'].str.contains('control', case=False, na=False)
-            ]['variation'].iloc[0]
-
-            # 5. Pré-calcul des métriques communes
-            transaction_metrics = (transaction_df.groupby('variation')
-                .agg({
-                    'transaction_id': 'nunique',
-                    'revenue': 'sum',
-                    'quantity': 'sum'
-                })
-                .rename(columns={
-                    'transaction_id': 'transactions',
-                    'revenue': 'total_revenue',
-                    'quantity': 'total_quantity'
-                }))
-
-            # 6. Traitement par variation avec calculs vectorisés
-            results = {}
-            variations = overall_df['variation'].unique()
+            self._validate_input_data(data)
             
-            # Traiter d'abord le contrôle
-            control_metrics = {}
-            ctrl_overall = overall_df[overall_df['variation'] == control_variation].iloc[0]
-            ctrl_metrics = transaction_metrics.loc[control_variation]
-            ctrl_trans = transaction_df[transaction_df['variation'] == control_variation]
+            # Créer la table virtuelle
+            virtual_table = self.create_analysis_table(data)
+            overall_df = pd.DataFrame(data['raw_data']['overall'])
 
-            # Calculer les métriques pour le contrôle
-            for metric_key, calc_func in self._get_metric_calculators().items():
-                control_metrics[metric_key] = calc_func(
-                    ctrl_overall, ctrl_metrics, ctrl_trans,
-                    ctrl_overall, ctrl_metrics, ctrl_trans  # Mêmes données pour le contrôle
-                )
+            # Identifier le contrôle
+            control_variation = str(overall_df[overall_df['variation'].str.contains('control', case=False)]['variation'].iloc[0])
 
-            results[control_variation] = control_metrics
-            
-            # Puis traiter toutes les autres variations
-            for variation in variations:
-                if variation == control_variation:
-                    continue
-
-                var_metrics = {}
+            metrics_by_variation = {}
+            for variation in overall_df['variation'].unique():
+                var_data = virtual_table[virtual_table['variation'] == variation]
+                ctrl_data = virtual_table[virtual_table['variation'] == control_variation]
+                
                 var_overall = overall_df[overall_df['variation'] == variation].iloc[0]
-                var_trans_metrics = transaction_metrics.loc[variation]
-                var_trans = transaction_df[transaction_df['variation'] == variation]
+                ctrl_overall = overall_df[overall_df['variation'] == control_variation].iloc[0]
 
-                # Calculer toutes les métriques pour cette variation
-                for metric_key, calc_func in self._get_metric_calculators().items():
-                    var_metrics[metric_key] = calc_func(
-                        var_overall, var_trans_metrics, var_trans,
-                        ctrl_overall, ctrl_metrics, ctrl_trans
-                    )
+                metrics = {
+                    'users': {
+                        'value': float(var_overall['users']),
+                        'control_value': float(ctrl_overall['users'])
+                        # Pas d'uplift ni de confidence pour users
+                    },
+                    'transaction_rate': self._calculate_transaction_rate(var_data, ctrl_data, var_overall, ctrl_overall),
+                    'aov': self._calculate_aov(var_data, ctrl_data),
+                    'avg_products': self._calculate_avg_products(var_data, ctrl_data),
+                    'total_revenue': self._calculate_total_revenue(var_data, ctrl_data),
+                    'arpu': self._calculate_arpu(var_data, ctrl_data, var_overall, ctrl_overall)
+                }
 
-                results[variation] = var_metrics
+                metrics = self._convert_numpy_types(metrics)
+                metrics_by_variation[str(variation)] = metrics
 
             return {
                 'success': True,
-                'data': results,
-                'control': control_variation
+                'data': metrics_by_variation,
+                'control': control_variation,
+                'virtual_table': virtual_table.to_dict('records')
             }
 
         except Exception as e:
-            logger.error(f"Error calculating revenue metrics: {str(e)}", exc_info=True)
+            logger.error(f"Error calculating revenue metrics: {str(e)}")
+            return {'success': False, 'error': str(e)}
+
+    def _calculate_transaction_rate(self, var_data: pd.DataFrame, ctrl_data: pd.DataFrame, var_overall: pd.Series, ctrl_overall: pd.Series) -> Dict:
+        """Calcule le taux de conversion avec le test exact de Fisher"""
+        try:
+            # Calcul des taux de conversion
+            var_trans = len(var_data)
+            ctrl_trans = len(ctrl_data)
+            var_users = float(var_overall['users'])
+            ctrl_users = float(ctrl_overall['users'])
+            
+            var_rate = (var_trans / var_users) * 100 if var_users > 0 else 0
+            ctrl_rate = (ctrl_trans / ctrl_users) * 100 if ctrl_users > 0 else 0
+
+            # Test exact de Fisher
+            contingency_table = [
+                [var_trans, int(var_users - var_trans)],  # [succès, échecs] variation
+                [ctrl_trans, int(ctrl_users - ctrl_trans)] # [succès, échecs] contrôle
+            ]
+            _, p_value = stats.fisher_exact(contingency_table)
+            confidence = (1 - p_value) * 100
+
+            # Calculer l'intervalle de confiance
+            confidence_interval = self._calculate_transaction_rate_confidence_interval(
+                var_trans,
+                var_users,
+                ctrl_trans,
+                ctrl_users
+            )
+
             return {
-                'success': False,
+                'value': var_rate,
+                'control_value': ctrl_rate,
+                'uplift': ((var_rate - ctrl_rate) / ctrl_rate) * 100 if ctrl_rate > 0 else 0,
+                'confidence': round(confidence, 2),
+                'confidence_interval': confidence_interval,
+                'details': {
+                    'variation': {
+                        'count': var_trans,
+                        'total': int(var_users),
+                        'rate': round(var_rate, 2),
+                        'unit': 'percentage'
+                    },
+                    'control': {
+                        'count': ctrl_trans,
+                        'total': int(ctrl_users),
+                        'rate': round(ctrl_rate, 2),
+                        'unit': 'percentage'
+                    }
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error calculating transaction rate: {str(e)}")
+            return self._get_default_metric_result()
+
+    def _calculate_aov(self, var_data: pd.DataFrame, ctrl_data: pd.DataFrame) -> Dict:
+        """Calcule l'AOV avec le test de Mann-Whitney U"""
+        try:
+            # Calcul des AOV par transaction
+            var_aovs = var_data['revenue'].values  # Valeurs individuelles des transactions
+            ctrl_aovs = ctrl_data['revenue'].values  # Valeurs individuelles des transactions
+            
+            var_aov = np.mean(var_aovs) if len(var_aovs) > 0 else 0
+            ctrl_aov = np.mean(ctrl_aovs) if len(ctrl_aovs) > 0 else 0
+
+            # Test de Mann-Whitney U pour la confiance
+            _, p_value = stats.mannwhitneyu(
+                var_aovs,
+                ctrl_aovs,
+                alternative='two-sided'
+            )
+            confidence = (1 - p_value) * 100
+
+            # Bootstrap pour l'intervalle de confiance
+            n_bootstrap = 1000
+            diffs = []
+            
+            for _ in range(n_bootstrap):
+                # Échantillonnage avec remplacement des transactions individuelles
+                var_sample = np.random.choice(var_aovs, size=len(var_aovs), replace=True)
+                ctrl_sample = np.random.choice(ctrl_aovs, size=len(ctrl_aovs), replace=True)
+                
+                # Calculer les moyennes des échantillons
+                var_sample_mean = np.mean(var_sample)
+                ctrl_sample_mean = np.mean(ctrl_sample)
+                
+                # Calculer la différence relative en pourcentage
+                diff_pct = ((var_sample_mean - ctrl_sample_mean) / ctrl_sample_mean) * 100 if ctrl_sample_mean != 0 else 0
+                diffs.append(diff_pct)
+
+            # Calculer les percentiles pour l'intervalle de confiance
+            lower = np.percentile(diffs, 2.5)
+            upper = np.percentile(diffs, 97.5)
+
+            return {
+                'value': var_aov,
+                'control_value': ctrl_aov,
+                'uplift': ((var_aov - ctrl_aov) / ctrl_aov) * 100 if ctrl_aov > 0 else 0,
+                'confidence': round(confidence, 2),
+                'confidence_interval': {'lower': round(lower, 2), 'upper': round(upper, 2)},
+                'details': {
+                    'variation': {
+                        'count': len(var_aovs),
+                        'total': var_data['revenue'].sum(),
+                        'rate': round(var_aov, 2),
+                        'unit': 'currency'
+                    },
+                    'control': {
+                        'count': len(ctrl_aovs),
+                        'total': ctrl_data['revenue'].sum(),
+                        'rate': round(ctrl_aov, 2),
+                        'unit': 'currency'
+                    }
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error calculating AOV: {str(e)}")
+            return self._get_default_metric_result()
+
+    def _calculate_avg_products(self, var_data: pd.DataFrame, ctrl_data: pd.DataFrame) -> Dict:
+        """
+        Calcule la moyenne des produits avec le test de Mann-Whitney U
+        """
+        try:
+            var_quantities = var_data['quantity'].values
+            ctrl_quantities = ctrl_data['quantity'].values
+            
+            var_avg = np.mean(var_quantities) if len(var_quantities) > 0 else 0
+            ctrl_avg = np.mean(ctrl_quantities) if len(ctrl_quantities) > 0 else 0
+
+            # Test de Mann-Whitney U
+            _, p_value = stats.mannwhitneyu(
+                var_quantities,
+                ctrl_quantities,
+                alternative='two-sided'
+            )
+            confidence = (1 - p_value) * 100
+
+            # Bootstrap pour l'intervalle de confiance
+            n_bootstrap = 1000
+            diffs = []
+            for _ in range(n_bootstrap):
+                var_sample = np.random.choice(var_quantities, size=len(var_quantities), replace=True)
+                ctrl_sample = np.random.choice(ctrl_quantities, size=len(ctrl_quantities), replace=True)
+                diff_pct = ((np.mean(var_sample) - np.mean(ctrl_sample)) / np.mean(ctrl_sample)) * 100
+                diffs.append(diff_pct)
+            
+            lower = np.percentile(diffs, 2.5)
+            upper = np.percentile(diffs, 97.5)
+
+            return {
+                'value': var_avg,
+                'control_value': ctrl_avg,
+                'uplift': ((var_avg - ctrl_avg) / ctrl_avg) * 100 if ctrl_avg > 0 else 0,
+                'confidence': round(confidence, 2),
+                'confidence_interval': {'lower': round(lower, 2), 'upper': round(upper, 2)},
+                'details': {
+                    'variation': {
+                        'count': len(var_quantities),
+                        'total': int(np.sum(var_quantities)),
+                        'rate': round(var_avg, 2),
+                        'unit': 'quantity'
+                    },
+                    'control': {
+                        'count': len(ctrl_quantities),
+                        'total': int(np.sum(ctrl_quantities)),
+                        'rate': round(ctrl_avg, 2),
+                        'unit': 'quantity'
+                    }
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error calculating avg products metrics: {str(e)}")
+            return {
+                'value': 0,
+                'control_value': 0,
+                'uplift': 0,
+                'confidence': 0,
+                'confidence_interval': {'lower': 0, 'upper': 0},
+                'details': {
+                    'variation': {'count': 0, 'total': 0, 'rate': 0},
+                    'control': {'count': 0, 'total': 0, 'rate': 0}
+                }
+            }
+
+    def _calculate_total_revenue(self, var_data: pd.DataFrame, ctrl_data: pd.DataFrame) -> Dict:
+        """Calcule le revenu total avec Mann-Whitney U test"""
+        try:
+            # Calculer les revenus totaux
+            var_revenue = var_data['revenue'].sum()
+            ctrl_revenue = ctrl_data['revenue'].sum()
+            
+            # Test de Mann-Whitney U pour la confiance
+            _, p_value = stats.mannwhitneyu(
+                var_data['revenue'].values,
+                ctrl_data['revenue'].values,
+                alternative='two-sided'
+            )
+            confidence = (1 - p_value) * 100
+
+            # Calculer l'intervalle de confiance avec la méthode de Mann-Whitney U
+            # Utiliser la différence relative des distributions
+            var_values = var_data['revenue'].values
+            ctrl_values = ctrl_data['revenue'].values
+            
+            # Calculer les rangs moyens
+            var_ranks = stats.rankdata(np.concatenate([var_values, ctrl_values]))[:len(var_values)]
+            ctrl_ranks = stats.rankdata(np.concatenate([var_values, ctrl_values]))[len(var_values):]
+            
+            # Calculer l'erreur standard
+            n1, n2 = len(var_values), len(ctrl_values)
+            se = np.sqrt((n1 * n2 * (n1 + n2 + 1)) / 12)
+            
+            # Calculer l'intervalle de confiance (95%)
+            z = 1.96
+            margin = z * se
+            
+            # Convertir en différence relative
+            diff = ((var_revenue - ctrl_revenue) / ctrl_revenue) * 100 if ctrl_revenue > 0 else 0
+            margin_pct = (margin / ctrl_revenue) * 100 if ctrl_revenue > 0 else 0
+
+            return {
+                'value': var_revenue,
+                'control_value': ctrl_revenue,
+                'uplift': diff,
+                'confidence': round(confidence, 2),
+                'confidence_interval': {
+                    'lower': round(diff - margin_pct, 2),
+                    'upper': round(diff + margin_pct, 2)
+                },
+                'details': {
+                    'variation': {
+                        'count': len(var_data),
+                        'total': var_revenue,
+                        'rate': var_revenue,  # Pour le revenu total, rate = total
+                        'unit': 'currency'
+                    },
+                    'control': {
+                        'count': len(ctrl_data),
+                        'total': ctrl_revenue,
+                        'rate': ctrl_revenue,  # Pour le revenu total, rate = total
+                        'unit': 'currency'
+                    }
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error calculating total revenue: {str(e)}")
+            return self._get_default_metric_result()
+
+    def _calculate_arpu(self, var_data: pd.DataFrame, ctrl_data: pd.DataFrame, var_overall: pd.Series, ctrl_overall: pd.Series) -> Dict:
+        """Calcule l'ARPU (Average Revenue Per User) avec Mann-Whitney U test"""
+        try:
+            # Calculer l'ARPU
+            var_revenue = var_data['revenue'].sum()
+            ctrl_revenue = ctrl_data['revenue'].sum()
+            var_users = float(var_overall['users'])
+            ctrl_users = float(ctrl_overall['users'])
+            
+            var_arpu = var_revenue / var_users if var_users > 0 else 0
+            ctrl_arpu = ctrl_revenue / ctrl_users if ctrl_users > 0 else 0
+
+            # Test de Mann-Whitney U pour la confiance
+            _, p_value = stats.mannwhitneyu(
+                var_data['revenue'].values,
+                ctrl_data['revenue'].values,
+                alternative='two-sided'
+            )
+            confidence = (1 - p_value) * 100
+
+            # Bootstrap pour l'intervalle de confiance
+            n_bootstrap = 1000
+            diffs = []
+            
+            for _ in range(n_bootstrap):
+                # Échantillonnage avec remplacement des revenus
+                var_sample = np.random.choice(var_data['revenue'].values, size=len(var_data), replace=True)
+                ctrl_sample = np.random.choice(ctrl_data['revenue'].values, size=len(ctrl_data), replace=True)
+                
+                # Calculer l'ARPU pour chaque échantillon
+                var_sample_arpu = np.sum(var_sample) / var_users
+                ctrl_sample_arpu = np.sum(ctrl_sample) / ctrl_users
+                
+                # Calculer la différence relative en pourcentage
+                diff_pct = ((var_sample_arpu - ctrl_sample_arpu) / ctrl_sample_arpu) * 100 if ctrl_sample_arpu != 0 else 0
+                diffs.append(diff_pct)
+
+            # Calculer les percentiles pour l'intervalle de confiance
+            lower = np.percentile(diffs, 2.5)
+            upper = np.percentile(diffs, 97.5)
+
+            return {
+                'value': var_arpu,
+                'control_value': ctrl_arpu,
+                'uplift': ((var_arpu - ctrl_arpu) / ctrl_arpu) * 100 if ctrl_arpu > 0 else 0,
+                'confidence': round(confidence, 2),
+                'confidence_interval': {'lower': round(lower, 2), 'upper': round(upper, 2)},
+                'details': {
+                    'variation': {
+                        'count': int(var_users),
+                        'total': var_revenue,
+                        'rate': round(var_arpu, 2),
+                        'unit': 'currency'
+                    },
+                    'control': {
+                        'count': int(ctrl_users),
+                        'total': ctrl_revenue,
+                        'rate': round(ctrl_arpu, 2),
+                        'unit': 'currency'
+                    }
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error calculating ARPU: {str(e)}")
+            return self._get_default_metric_result()
+
+    def validate_transaction_data(self, data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Valide la cohérence des données de transaction.
+        """
+        try:
+            validation_results = {
+                'is_valid': True,
+                'warnings': [],
+                'stats': {}
+            }
+
+            df = pd.DataFrame(data)
+            
+            # Statistiques de base
+            validation_results['stats'] = {
+                'total_transactions': len(df['transaction_id'].unique()),
+                'total_records': len(df),
+                'avg_items_per_transaction': len(df) / len(df['transaction_id'].unique()),
+                'revenue_range': {
+                    'min': df['revenue'].min(),
+                    'max': df['revenue'].max(),
+                    'mean': df['revenue'].mean()
+                },
+                'quantity_range': {
+                    'min': df['quantity'].min(),
+                    'max': df['quantity'].max(),
+                    'mean': df['quantity'].mean()
+                }
+            }
+
+            # Vérifications de cohérence
+            # 1. Revenus négatifs
+            negative_revenue = df[df['revenue'] < 0]
+            if not negative_revenue.empty:
+                validation_results['warnings'].append({
+                    'type': 'negative_revenue',
+                    'count': len(negative_revenue),
+                    'sample': negative_revenue.head(2).to_dict('records')
+                })
+
+            # 2. Quantités nulles ou négatives
+            invalid_quantity = df[df['quantity'] <= 0]
+            if not invalid_quantity.empty:
+                validation_results['warnings'].append({
+                    'type': 'invalid_quantity',
+                    'count': len(invalid_quantity),
+                    'sample': invalid_quantity.head(2).to_dict('records')
+                })
+
+            # 3. Variations manquantes
+            missing_variation = df[df['variation'].isna()]
+            if not missing_variation.empty:
+                validation_results['warnings'].append({
+                    'type': 'missing_variation',
+                    'count': len(missing_variation),
+                    'sample': missing_variation.head(2).to_dict('records')
+                })
+
+            return validation_results
+
+        except Exception as e:
+            logger.error(f"Erreur lors de la validation des données: {str(e)}")
+            return {
+                'is_valid': False,
                 'error': str(e)
             }
 
-    def _get_metric_calculators(self):
-        """Retourne un dictionnaire des fonctions de calcul pour chaque métrique."""
-        return {
-            'users': self._calculate_users_metric,
-            'transaction_rate': self._calculate_transaction_rate,
-            'aov': self._calculate_aov,
-            'avg_products': self._calculate_avg_products,
-            'total_revenue': self._calculate_total_revenue,
-            'arpu': self._calculate_arpu
-        }
+    def create_analysis_table(self, data: Dict[str, Any]) -> pd.DataFrame:
+        try:
+            transaction_df = pd.DataFrame(data.get('raw_data', {}).get('transaction', []))
+            overall_df = pd.DataFrame(data.get('raw_data', {}).get('overall', []))
+            
+            if transaction_df.empty or overall_df.empty:
+                raise ValueError("Missing transaction or overall data")
 
-    def _calculate_confidence_interval(
-        self,
-        var_data: np.ndarray,
-        ctrl_data: np.ndarray,
-        metric_type: str,
-        confidence_level: float = 0.95
-    ) -> Tuple[float, float]:
-        """Calcule l'intervalle de confiance pour une métrique donnée."""
+            # S'assurer que toutes les colonnes nécessaires existent
+            required_columns = {
+                'transaction_id', 'revenue', 'quantity', 'variation', 
+                'device_category', 'item_category2', 'item_name', 
+                'item_bundle', 'item_name_simple'
+            }
+            
+            # Ajouter les colonnes manquantes avec des valeurs par défaut
+            for col in required_columns:
+                if col not in transaction_df.columns:
+                    transaction_df[col] = 'N/A'
+
+            # Conversion des colonnes numériques
+            numeric_columns = ['revenue', 'quantity']
+            for col in numeric_columns:
+                if col in transaction_df.columns:
+                    transaction_df[col] = pd.to_numeric(transaction_df[col], errors='coerce').fillna(0)
+
+            # Définir les colonnes à concaténer
+            concat_columns = ['item_category2', 'item_name', 'item_bundle', 'item_name_simple']
+            
+            # Créer le dictionnaire d'agrégation
+            agg_dict = {
+                'revenue': 'sum',
+                'quantity': 'sum',
+                'variation': 'first',
+                'device_category': 'first',
+                **{col: lambda x: ' | '.join(sorted(set(str(i) for i in x if pd.notna(i) and str(i).strip()))) 
+                   for col in concat_columns}
+            }
+
+            # Grouper par transaction_id
+            analysis_table = transaction_df.groupby('transaction_id').agg(agg_dict).reset_index()
+
+            # Arrondir les valeurs numériques
+            for col in numeric_columns:
+                if col in analysis_table.columns:
+                    analysis_table[col] = analysis_table[col].round(2)
+
+            return analysis_table
+
+        except Exception as e:
+            logger.error(f"Error creating analysis table: {str(e)}")
+            raise
+
+    def _convert_numpy_types(self, obj: Any) -> Any:
+        """Convertit récursivement les types numpy en types Python standards."""
+        if isinstance(obj, dict):
+            return {key: self._convert_numpy_types(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_numpy_types(item) for item in obj]
+        elif isinstance(obj, (np.int64, np.int32)):
+            return int(obj)
+        elif isinstance(obj, (np.float64, np.float32)):
+            return float(obj)
+        return obj
+
+    def _calculate_confidence_stats(self, var_data: np.array, ctrl_data: np.array, metric_type: str) -> Tuple[float, float, float]:
+        """
+        Calcule la confiance statistique et l'intervalle de confiance selon le type de métrique
+        
+        Args:
+            var_data: Données de la variation
+            ctrl_data: Données du contrôle
+            metric_type: Type de métrique ('rate', 'continuous', 'count')
+            
+        Returns:
+            Tuple[float, float, float]: (confiance, borne inférieure, borne supérieure)
+        """
         try:
             if metric_type == 'rate':
-                # Pour les taux, utiliser la méthode de Wilson
-                var_success = var_data[0]
-                var_total = var_data[1]
-                ctrl_success = ctrl_data[0]
-                ctrl_total = ctrl_data[1]
+                # Test exact de Fisher pour les taux de conversion
+                var_success = len(var_data)
+                var_total = float(var_overall['users'])
+                ctrl_success = len(ctrl_data)
+                ctrl_total = float(ctrl_overall['users'])
                 
-                var_rate = var_success / var_total if var_total > 0 else 0
-                ctrl_rate = ctrl_success / ctrl_total if ctrl_total > 0 else 0
+                contingency_table = [
+                    [var_success, var_total - var_success],
+                    [ctrl_success, ctrl_total - ctrl_success]
+                ]
+                _, p_value = stats.fisher_exact(contingency_table)
+                confidence = (1 - p_value) * 100
                 
-                # Calcul de l'erreur standard
-                var_se = np.sqrt((var_rate * (1 - var_rate)) / var_total) if var_total > 0 else 0
-                ctrl_se = np.sqrt((ctrl_rate * (1 - ctrl_rate)) / ctrl_total) if ctrl_total > 0 else 0
-                
-                # Erreur standard de la différence
-                se_diff = np.sqrt(var_se**2 + ctrl_se**2)
-                
-                # Calcul de l'intervalle
-                z_score = stats.norm.ppf((1 + confidence_level) / 2)
+                # Intervalle de confiance pour la différence de proportions
+                var_rate = var_success / var_total
+                ctrl_rate = ctrl_success / ctrl_total
                 diff = var_rate - ctrl_rate
-                margin = z_score * se_diff
                 
-                return (diff - margin) * 100, (diff + margin) * 100
+                # Méthode Wilson pour l'intervalle de confiance
+                z = 1.96  # 95% confidence
+                lower = diff - z * np.sqrt((var_rate * (1-var_rate))/var_total + (ctrl_rate * (1-ctrl_rate))/ctrl_total)
+                upper = diff + z * np.sqrt((var_rate * (1-var_rate))/var_total + (ctrl_rate * (1-ctrl_rate))/ctrl_total)
                 
-            elif metric_type in ['revenue', 'average']:
-                # Pour les métriques continues, utiliser bootstrap
-                n_bootstrap = 10000
+            elif metric_type == 'continuous':
+                # Test de Mann-Whitney U pour les données continues (AOV, ARPU)
+                _, p_value = stats.mannwhitneyu(
+                    var_data,
+                    ctrl_data,
+                    alternative='two-sided'
+                )
+                confidence = (1 - p_value) * 100
+
+                # Bootstrap pour l'intervalle de confiance
+                n_bootstrap = 1000
                 diffs = []
                 
                 for _ in range(n_bootstrap):
                     var_sample = np.random.choice(var_data, size=len(var_data), replace=True)
                     ctrl_sample = np.random.choice(ctrl_data, size=len(ctrl_data), replace=True)
-                    diff = np.mean(var_sample) - np.mean(ctrl_sample)
-                    diffs.append(diff)
+                    diff_pct = ((np.mean(var_sample) - np.mean(ctrl_sample)) / 
+                               np.mean(ctrl_sample)) * 100 if np.mean(ctrl_sample) != 0 else 0
+                    diffs.append(diff_pct)
                 
-                lower_percentile = ((1 - confidence_level) / 2) * 100
-                upper_percentile = (1 - (1 - confidence_level) / 2) * 100
+                lower = np.percentile(diffs, 2.5)
+                upper = np.percentile(diffs, 97.5)
                 
-                ci_lower = np.percentile(diffs, lower_percentile)
-                ci_upper = np.percentile(diffs, upper_percentile)
+            else:  # count
+                # Test t de Student pour les comptages
+                _, p_value = stats.ttest_ind(
+                    var_data,
+                    ctrl_data,
+                    equal_var=False  # Test de Welch
+                )
+                confidence = (1 - p_value) * 100
                 
-                return (ci_lower / np.mean(ctrl_data) * 100, ci_upper / np.mean(ctrl_data) * 100)
+                # Intervalle de confiance pour la différence de moyennes
+                var_mean = np.mean(var_data)
+                ctrl_mean = np.mean(ctrl_data)
+                diff_pct = ((var_mean - ctrl_mean) / ctrl_mean) * 100 if ctrl_mean != 0 else 0
                 
-            return 0.0, 0.0
-            
-        except Exception as e:
-            logger.error(f"Error calculating confidence interval: {str(e)}")
-            return 0.0, 0.0
+                se = np.sqrt(np.var(var_data)/len(var_data) + np.var(ctrl_data)/len(ctrl_data))
+                lower = diff_pct - 1.96 * se
+                upper = diff_pct + 1.96 * se
 
-    def _calculate_metric_stats(
-        self,
-        var_value: float,
-        ctrl_value: float,
-        metric_type: str,
-        var_data: Optional[Union[List, np.ndarray]] = None,
-        ctrl_data: Optional[Union[List, np.ndarray]] = None
-    ) -> Dict[str, Any]:
-        """Calcule les statistiques pour une métrique donnée."""
+            return round(confidence, 2), round(lower, 2), round(upper, 2)
+
+        except Exception as e:
+            logger.error(f"Error calculating confidence stats: {str(e)}")
+            return 0.0, 0.0, 0.0
+
+    def _calculate_revenue_metrics(self, var_data: pd.DataFrame, ctrl_data: pd.DataFrame) -> Dict:
+        """Calcule les métriques de revenus à partir de la table virtuelle"""
         try:
-            # Vérification et nettoyage des données
-            if var_data is not None:
-                var_data = np.array(var_data, dtype=float)
-                var_data = var_data[~np.isnan(var_data)]  # Supprime les NaN
-                var_data = var_data[~np.isinf(var_data)]  # Supprime les infinis
+            # Calculer les revenus totaux
+            var_revenue = var_data['revenue'].sum()
+            ctrl_revenue = ctrl_data['revenue'].sum()
             
-            if ctrl_data is not None:
-                ctrl_data = np.array(ctrl_data, dtype=float)
-                ctrl_data = ctrl_data[~np.isnan(ctrl_data)]  # Supprime les NaN
-                ctrl_data = ctrl_data[~np.isinf(ctrl_data)]  # Supprime les infinis
+            # Nombre de transactions
+            var_transactions = len(var_data)
+            ctrl_transactions = len(ctrl_data)
+            
+            # Calculer le revenu moyen par transaction
+            var_avg = var_revenue / var_transactions if var_transactions > 0 else 0
+            ctrl_avg = ctrl_revenue / ctrl_transactions if ctrl_transactions > 0 else 0
 
-            # Calcul de l'uplift avec vérification
-            uplift = ((var_value - ctrl_value) / ctrl_value * 100) if ctrl_value != 0 else 0
-            
-            # Calcul de la confiance selon le type de métrique
-            confidence = 0
-            
-            if metric_type == 'rate' and var_data is not None and ctrl_data is not None:
-                # Vérification des données pour le test de Fisher
-                if len(var_data) >= 2 and len(ctrl_data) >= 2:
-                    try:
-                        contingency_table = [
-                            [int(var_data[0]), int(var_data[1] - var_data[0])],
-                            [int(ctrl_data[0]), int(ctrl_data[1] - ctrl_data[0])]
-                        ]
-                        if all(all(x >= 0 for x in row) for row in contingency_table):
-                            _, confidence = stats.fisher_exact(contingency_table)
-                            confidence = (1 - confidence) * 100
-                    except Exception:
-                        confidence = 0
-                        
-            elif metric_type in ['revenue', 'average'] and var_data is not None and ctrl_data is not None:
-                # Vérification pour Mann-Whitney
-                if len(var_data) > 0 and len(ctrl_data) > 0:
-                    try:
-                        # Suppression des valeurs nulles ou négatives pour les revenus
-                        var_data = var_data[var_data > 0]
-                        ctrl_data = ctrl_data[ctrl_data > 0]
-                        
-                        if len(var_data) > 0 and len(ctrl_data) > 0:
-                            _, confidence = stats.mannwhitneyu(
-                                var_data,
-                                ctrl_data,
-                                alternative='two-sided'
-                            )
-                            confidence = (1 - confidence) * 100
-                    except Exception:
-                        confidence = 0
-                        
-            elif metric_type == 'users' and var_data is not None and ctrl_data is not None:
-                # Vérification pour t-test
-                try:
-                    if len(var_data) > 0 and len(ctrl_data) > 0:
-                        _, confidence = stats.ttest_ind(
-                            np.array([float(var_value)]),
-                            np.array([float(ctrl_value)]),
-                            equal_var=False
-                        )
-                        confidence = (1 - confidence) * 100 if not np.isnan(confidence) else 0
-                except Exception:
-                    confidence = 0
+            # Test de Mann-Whitney U pour la confiance
+            _, p_value = stats.mannwhitneyu(
+                var_data['revenue'].values,
+                ctrl_data['revenue'].values,
+                alternative='two-sided'
+            )
+            confidence = (1 - p_value) * 100
 
-            # Calcul de l'intervalle de confiance avec vérification
-            confidence_interval = {'lower': 0.0, 'upper': 0.0}
-            if var_data is not None and ctrl_data is not None:
-                if len(var_data) > 0 and len(ctrl_data) > 0:
-                    ci_lower, ci_upper = self._calculate_confidence_interval(
-                        var_data,
-                        ctrl_data,
-                        metric_type
-                    )
-                    confidence_interval = {
-                        'lower': round(ci_lower, 2),
-                        'upper': round(ci_upper, 2)
+            # Bootstrap pour l'intervalle de confiance
+            n_bootstrap = 1000
+            diffs = []
+            for _ in range(n_bootstrap):
+                var_sample = np.random.choice(var_data['revenue'].values, size=len(var_data), replace=True)
+                ctrl_sample = np.random.choice(ctrl_data['revenue'].values, size=len(ctrl_data), replace=True)
+                var_mean = np.mean(var_sample)
+                ctrl_mean = np.mean(ctrl_sample)
+                diff_pct = ((var_mean - ctrl_mean) / ctrl_mean) * 100 if ctrl_mean != 0 else 0
+                diffs.append(diff_pct)
+            
+            lower = np.percentile(diffs, 2.5)
+            upper = np.percentile(diffs, 97.5)
+
+            return {
+                'value': var_avg,
+                'control_value': ctrl_avg,
+                'uplift': ((var_avg - ctrl_avg) / ctrl_avg) * 100 if ctrl_avg > 0 else 0,
+                'confidence': round(confidence, 2),
+                'confidence_interval': {'lower': round(lower, 2), 'upper': round(upper, 2)},
+                'details': {
+                    'variation': {
+                        'count': var_transactions,
+                        'total': var_revenue,
+                        'rate': round(var_avg, 2),
+                        'unit': 'currency'
+                    },
+                    'control': {
+                        'count': ctrl_transactions,
+                        'total': ctrl_revenue,
+                        'rate': round(ctrl_avg, 2),
+                        'unit': 'currency'
                     }
-
-            return {
-                'value': round(float(var_value), 2),
-                'control_value': round(float(ctrl_value), 2),
-                'uplift': round(float(uplift), 2),
-                'confidence': round(float(confidence), 2),
-                'confidence_interval': confidence_interval
+                }
             }
-            
         except Exception as e:
-            logger.error(f"Error in _calculate_metric_stats: {str(e)}")
+            logger.error(f"Error calculating revenue metrics: {str(e)}")
             return {
-                'value': round(float(var_value), 2),
-                'control_value': round(float(ctrl_value), 2),
+                'value': 0,
+                'control_value': 0,
                 'uplift': 0,
                 'confidence': 0,
-                'confidence_interval': {'lower': 0.0, 'upper': 0.0}
+                'confidence_interval': {'lower': 0, 'upper': 0},
+                'details': {
+                    'variation': {'count': 0, 'total': 0, 'rate': 0, 'unit': 'currency'},
+                    'control': {'count': 0, 'total': 0, 'rate': 0, 'unit': 'currency'}
+                }
             }
 
-    def _calculate_users_metric(self, var_overall, var_metrics, var_trans, ctrl_overall, ctrl_metrics, ctrl_trans):
-        """Calcule les statistiques pour la métrique Users."""
-        return self._calculate_metric_stats(
-            var_overall['users'],
-            ctrl_overall['users'],
-            'users',
-            [var_overall['users']],
-            [ctrl_overall['users']]
-        )
+    def _calculate_add_to_cart_confidence(self, var_adds: float, var_users: float, ctrl_adds: float, ctrl_users: float) -> float:
+        """Calcule la confiance statistique pour le taux d'ajout au panier avec le test exact de Fisher"""
+        try:
+            # Convertir les valeurs en nombres
+            var_adds = float(var_adds)
+            var_users = float(var_users)
+            ctrl_adds = float(ctrl_adds)
+            ctrl_users = float(ctrl_users)
+            
+            # Créer la table de contingence
+            contingency_table = [
+                [int(var_adds), int(var_users - var_adds)],   # [succès, échecs] variation
+                [int(ctrl_adds), int(ctrl_users - ctrl_adds)] # [succès, échecs] contrôle
+            ]
+            
+            # Test exact de Fisher
+            _, p_value = stats.fisher_exact(contingency_table)
+            confidence = (1 - p_value) * 100
+            
+            return round(confidence, 2)
+        except Exception as e:
+            logger.error(f"Error calculating add to cart confidence: {str(e)}")
+            return 0.0
 
-    def _calculate_transaction_rate(self, var_overall, var_metrics, var_trans, ctrl_overall, ctrl_metrics, ctrl_trans):
-        """Calcule les statistiques pour le taux de transaction."""
-        var_trans_rate = (var_metrics['transactions'] / var_overall['users']) * 100
-        ctrl_trans_rate = (ctrl_metrics['transactions'] / ctrl_overall['users']) * 100
-        
-        return self._calculate_metric_stats(
-            var_trans_rate,
-            ctrl_trans_rate,
-            'rate',
-            [var_metrics['transactions'], var_overall['users']],
-            [ctrl_metrics['transactions'], ctrl_overall['users']]
-        )
+    def _calculate_revenue_confidence(self, var_revenue: np.array, ctrl_revenue: np.array) -> float:
+        """Calcule la confiance statistique pour le revenu avec le test de Mann-Whitney U"""
+        try:
+            # Test de Mann-Whitney U
+            _, p_value = stats.mannwhitneyu(
+                var_revenue,
+                ctrl_revenue,
+                alternative='two-sided'
+            )
+            confidence = (1 - p_value) * 100
+            
+            return round(confidence, 2)
+        except Exception as e:
+            logger.error(f"Error calculating revenue confidence: {str(e)}")
+            return 0.0
 
-    def _calculate_aov(self, var_overall, var_metrics, var_trans, ctrl_overall, ctrl_metrics, ctrl_trans):
-        """Calcule les statistiques pour l'AOV (Average Order Value)."""
-        var_aov = var_metrics['total_revenue'] / var_metrics['transactions']
-        ctrl_aov = ctrl_metrics['total_revenue'] / ctrl_metrics['transactions']
-        
-        return self._calculate_metric_stats(
-            var_aov,
-            ctrl_aov,
-            'revenue',
-            var_trans['revenue'].values,
-            ctrl_trans['revenue'].values
-        )
+    def _calculate_revenue_confidence_interval(self, var_revenue: np.array, ctrl_revenue: np.array) -> Dict[str, float]:
+        """Calcule l'intervalle de confiance pour le revenu total avec bootstrap"""
+        try:
+            # Bootstrap pour l'intervalle de confiance
+            n_bootstrap = 1000
+            diffs = []
+            
+            # Calculer les sommes totales initiales
+            var_total = np.sum(var_revenue)
+            ctrl_total = np.sum(ctrl_revenue)
+            
+            # Calculer la différence relative observée
+            observed_diff = ((var_total - ctrl_total) / ctrl_total) * 100 if ctrl_total != 0 else 0
+            
+            for _ in range(n_bootstrap):
+                # Échantillonnage avec remplacement
+                var_sample = np.random.choice(var_revenue, size=len(var_revenue), replace=True)
+                ctrl_sample = np.random.choice(ctrl_revenue, size=len(ctrl_revenue), replace=True)
+                
+                # Calculer les sommes totales pour chaque échantillon
+                var_sum = np.sum(var_sample)
+                ctrl_sum = np.sum(ctrl_sample)
+                
+                # Calculer la différence relative pour cet échantillon
+                diff_pct = ((var_sum - ctrl_sum) / ctrl_sum) * 100 if ctrl_sum != 0 else 0
+                diffs.append(diff_pct)
+            
+            # Calculer les percentiles pour l'intervalle de confiance
+            lower = np.percentile(diffs, 2.5)  # 2.5ème percentile pour 95% IC
+            upper = np.percentile(diffs, 97.5) # 97.5ème percentile pour 95% IC
+            
+            return {
+                'lower': round(lower, 2),
+                'upper': round(upper, 2)
+            }
+        except Exception as e:
+            logger.error(f"Error calculating revenue confidence interval: {str(e)}")
+            return {'lower': 0, 'upper': 0}
 
-    def _calculate_avg_products(self, var_overall, var_metrics, var_trans, ctrl_overall, ctrl_metrics, ctrl_trans):
-        """Calcule les statistiques pour la moyenne des produits par commande."""
-        var_avg_products = var_metrics['total_quantity'] / var_metrics['transactions']
-        ctrl_avg_products = ctrl_metrics['total_quantity'] / ctrl_metrics['transactions']
-        
-        return self._calculate_metric_stats(
-            var_avg_products,
-            ctrl_avg_products,
-            'average',
-            var_trans['quantity'].values,
-            ctrl_trans['quantity'].values
-        )
+    def _calculate_add_to_cart_confidence_interval(self, var_adds: float, var_users: float, ctrl_adds: float, ctrl_users: float) -> Dict[str, float]:
+        """Calcule l'intervalle de confiance pour le taux d'ajout au panier avec la méthode de Wilson"""
+        try:
+            # Convertir les valeurs en nombres
+            var_adds = float(var_adds)
+            var_users = float(var_users)
+            ctrl_adds = float(ctrl_adds)
+            ctrl_users = float(ctrl_users)
+            
+            # Calculer les proportions
+            var_rate = var_adds / var_users
+            ctrl_rate = ctrl_adds / ctrl_users
+            
+            # Calculer la différence relative
+            diff = ((var_rate - ctrl_rate) / ctrl_rate) * 100
+            
+            # Erreur standard pour la différence de proportions
+            se = np.sqrt((var_rate * (1 - var_rate)) / var_users + 
+                (ctrl_rate * (1 - ctrl_rate)) / ctrl_users)
+            
+            # Intervalle de confiance à 95% (z = 1.96)
+            margin = 1.96 * se * 100  # Convertir en pourcentage
+            
+            return {
+                'lower': round(diff - margin, 2),
+                'upper': round(diff + margin, 2)
+            }
+        except Exception as e:
+            logger.error(f"Error calculating add to cart confidence interval: {str(e)}")
+            return {'lower': 0, 'upper': 0}
 
-    def _calculate_total_revenue(self, var_overall, var_metrics, var_trans, ctrl_overall, ctrl_metrics, ctrl_trans):
-        """Calcule les statistiques pour le revenu total."""
-        return self._calculate_metric_stats(
-            var_metrics['total_revenue'],
-            ctrl_metrics['total_revenue'],
-            'revenue',
-            var_trans['revenue'].values,
-            ctrl_trans['revenue'].values
-        )
+    def _calculate_transaction_rate_confidence_interval(self, var_trans: float, var_users: float, ctrl_trans: float, ctrl_users: float) -> Dict[str, float]:
+        """Calcule l'intervalle de confiance pour le taux de transaction avec la méthode de Wilson"""
+        try:
+            # Convertir les valeurs en nombres
+            var_trans = float(var_trans)
+            var_users = float(var_users)
+            ctrl_trans = float(ctrl_trans)
+            ctrl_users = float(ctrl_users)
+            
+            # Calculer les proportions
+            var_rate = var_trans / var_users
+            ctrl_rate = ctrl_trans / ctrl_users
+            
+            # Calculer la différence relative
+            diff = ((var_rate - ctrl_rate) / ctrl_rate) * 100
+            
+            # Erreur standard pour la différence de proportions
+            se = np.sqrt((var_rate * (1 - var_rate)) / var_users + 
+                (ctrl_rate * (1 - ctrl_rate)) / ctrl_users)
+            
+            # Intervalle de confiance à 95% (z = 1.96)
+            margin = 1.96 * se * 100  # Convertir en pourcentage
+            
+            return {
+                'lower': round(diff - margin, 2),
+                'upper': round(diff + margin, 2)
+            }
+        except Exception as e:
+            logger.error(f"Error calculating transaction rate confidence interval: {str(e)}")
+            return {'lower': 0, 'upper': 0}
 
-    def _calculate_arpu(self, var_overall, var_metrics, var_trans, ctrl_overall, ctrl_metrics, ctrl_trans):
-        """Calcule les statistiques pour l'ARPU (Average Revenue Per User)."""
-        var_arpu = var_metrics['total_revenue'] / var_overall['users']
-        ctrl_arpu = ctrl_metrics['total_revenue'] / ctrl_overall['users']
-        
-        # Création des arrays pour ARPU
-        var_arpu_array = np.repeat(var_metrics['total_revenue'] / var_overall['users'], var_overall['users'])
-        ctrl_arpu_array = np.repeat(ctrl_metrics['total_revenue'] / ctrl_overall['users'], ctrl_overall['users'])
-        
-        return self._calculate_metric_stats(
-            var_arpu,
-            ctrl_arpu,
-            'revenue',
-            var_arpu_array,
-            ctrl_arpu_array
-        )
+    def _calculate_avg_products_confidence(self, var_data: np.array, ctrl_data: np.array) -> float:
+        """Calcule la confiance statistique pour le nombre moyen de produits avec Mann-Whitney U"""
+        try:
+            # Test de Mann-Whitney U
+            _, p_value = stats.mannwhitneyu(
+                var_data,
+                ctrl_data,
+                alternative='two-sided'
+            )
+            confidence = (1 - p_value) * 100
+            
+            return round(confidence, 2)
+        except Exception as e:
+            logger.error(f"Error calculating avg products confidence: {str(e)}")
+            return 0.0
+
+    def _calculate_avg_products_confidence_interval(self, var_data: np.array, ctrl_data: np.array) -> Dict[str, float]:
+        """Calcule l'intervalle de confiance pour le nombre moyen de produits avec bootstrap"""
+        try:
+            n_bootstrap = 1000
+            diffs = []
+            
+            # Moyennes initiales
+            var_mean = np.mean(var_data)
+            ctrl_mean = np.mean(ctrl_data)
+            
+            # Différence relative observée
+            observed_diff = ((var_mean - ctrl_mean) / ctrl_mean) * 100 if ctrl_mean != 0 else 0
+            
+            for _ in range(n_bootstrap):
+                var_sample = np.random.choice(var_data, size=len(var_data), replace=True)
+                ctrl_sample = np.random.choice(ctrl_data, size=len(ctrl_data), replace=True)
+                
+                var_sample_mean = np.mean(var_sample)
+                ctrl_sample_mean = np.mean(ctrl_sample)
+                
+                diff_pct = ((var_sample_mean - ctrl_sample_mean) / ctrl_sample_mean) * 100 if ctrl_sample_mean != 0 else 0
+                diffs.append(diff_pct)
+            
+            lower = np.percentile(diffs, 2.5)
+            upper = np.percentile(diffs, 97.5)
+            
+            return {
+                'lower': round(lower, 2),
+                'upper': round(upper, 2)
+            }
+        except Exception as e:
+            logger.error(f"Error calculating avg products confidence interval: {str(e)}")
+            return {'lower': 0, 'upper': 0}
+
+    def calculate_revenue_distribution_stats(self, var_data: pd.DataFrame, ctrl_data: pd.DataFrame, range_info: Dict) -> Dict:
+        """Calcule les statistiques pour la distribution des revenus"""
+        try:
+            # Filtrer les données pour ce range
+            var_in_range = var_data[(var_data['revenue'] >= range_info['min']) & (var_data['revenue'] <= range_info['max'])]
+            ctrl_in_range = ctrl_data[(ctrl_data['revenue'] >= range_info['min']) & (ctrl_data['revenue'] <= range_info['max'])]
+            
+            # Calculer les taux
+            var_rate = (len(var_in_range) / len(var_data)) * 100 if len(var_data) > 0 else 0
+            ctrl_rate = (len(ctrl_in_range) / len(ctrl_data)) * 100 if len(ctrl_data) > 0 else 0
+
+            # Test de Mann-Whitney U pour la confiance
+            _, p_value = stats.mannwhitneyu(
+                var_data['revenue'].values,
+                ctrl_data['revenue'].values,
+                alternative='two-sided'
+            )
+            confidence = (1 - p_value) * 100
+
+            # Calculer l'intervalle de confiance avec la méthode de Wilson
+            # Calculer les proportions
+            var_p = len(var_in_range) / len(var_data) if len(var_data) > 0 else 0
+            ctrl_p = len(ctrl_in_range) / len(ctrl_data) if len(ctrl_data) > 0 else 0
+            
+            # Erreur standard pour la différence de proportions
+            se = np.sqrt((var_p * (1 - var_p)) / len(var_data) + 
+                        (ctrl_p * (1 - ctrl_p)) / len(ctrl_data))
+            
+            # Intervalle de confiance à 95% (z = 1.96)
+            z = 1.96
+            margin = z * se * 100  # Convertir en pourcentage
+            
+            # Différence relative
+            diff = ((var_rate - ctrl_rate) / ctrl_rate) * 100 if ctrl_rate > 0 else 0
+
+            return {
+                'value': var_rate,
+                'control_value': ctrl_rate,
+                'uplift': diff,
+                'confidence': round(confidence, 2),
+                'confidence_interval': {
+                    'lower': round(diff - margin, 2),
+                    'upper': round(diff + margin, 2)
+                },
+                'details': {
+                    'variation': {
+                        'count': len(var_in_range),
+                        'total': len(var_data),
+                        'rate': round(var_rate, 2),
+                        'unit': 'percentage'
+                    },
+                    'control': {
+                        'count': len(ctrl_in_range),
+                        'total': len(ctrl_data),
+                        'rate': round(ctrl_rate, 2),
+                        'unit': 'percentage'
+                    }
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error calculating revenue distribution stats: {str(e)}")
+            return self._get_default_metric_result()

@@ -30,6 +30,8 @@ import { RevenueRangeTable } from "./revenue-range-table"
 import { Button } from "@/components/ui/button"
 import { BarChart2, TableIcon } from "lucide-react"
 import { Check } from "lucide-react"
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
+import { RevenueStatistics } from "./revenue-statistics"
 
 interface RevenueAnalysisProps {
   data: any
@@ -68,18 +70,36 @@ const STATISTICAL_METHODOLOGY = {
   },
   transaction_rate: {
     test: "Fisher's Exact Test",
-    description: "Compares conversion rates between variations. Ideal for binary outcomes (converted vs not converted).",
-    implementation: "stats.fisher_exact() for precise probability calculation"
+    description: "Compares conversion rates between variations. Ideal for binary outcomes (converted vs not converted). Provides exact p-values even for small sample sizes.",
+    implementation: "stats.fisher_exact()",
+    details: `
+      - Utilise une table de contingence 2x2
+      - Compare les proportions d'utilisateurs convertis vs non convertis
+      - Calcule la probabilité exacte de la différence observée
+      - Intervalle de confiance basé sur la méthode Wilson
+    `
   },
   aov: {
     test: "Mann-Whitney U Test",
-    description: "Non-parametric test comparing AOV distributions. Robust against non-normal distributions and outliers.",
-    implementation: "stats.mannwhitneyu() with alternative='two-sided'"
+    description: "Non-parametric test comparing AOV distributions. Robust against non-normal distributions and outliers, which is typical for revenue data.",
+    implementation: "stats.mannwhitneyu(alternative='two-sided')",
+    details: `
+      - Ne suppose pas une distribution normale
+      - Compare les distributions complètes, pas juste les moyennes
+      - Bootstrap pour l'intervalle de confiance (1000 itérations)
+      - Particulièrement adapté aux données de revenus souvent asymétriques
+    `
   },
   avg_products: {
     test: "Mann-Whitney U Test",
     description: "Non-parametric test for comparing product quantity distributions. Handles discrete, non-normal data.",
-    implementation: "stats.mannwhitneyu() with alternative='two-sided'"
+    implementation: "stats.mannwhitneyu(alternative='two-sided')",
+    details: `
+      - Adapté aux données discrètes (nombres entiers de produits)
+      - Compare les distributions de quantités
+      - Bootstrap pour l'intervalle de confiance
+      - Robuste aux valeurs extrêmes
+    `
   },
   total_revenue: {
     test: "Mann-Whitney U Test",
@@ -88,17 +108,23 @@ const STATISTICAL_METHODOLOGY = {
   },
   arpu: {
     test: "Mann-Whitney U Test",
-    description: "Non-parametric test comparing revenue per user distributions. Accounts for individual user revenue patterns.",
-    implementation: "stats.mannwhitneyu() with alternative='two-sided'"
+    description: "Non-parametric test comparing revenue distributions per user. Robust against non-normal distributions and outliers.",
+    implementation: "stats.mannwhitneyu(alternative='two-sided') with bootstrap CI",
+    details: `
+      - Ne suppose pas une distribution normale
+      - Compare les distributions de revenus par utilisateur
+      - Bootstrap pour l'intervalle de confiance
+      - Robuste aux valeurs extrêmes
+    `
   }
 }
 
 // Définir les metrics au niveau du module
 const metrics = [
-  { key: 'users', label: 'Users', type: 'number', showStats: true },
+  { key: 'users', label: 'Users', type: 'number', showStats: false },
   { key: 'transaction_rate', label: 'Transaction Rate', type: 'rate', showStats: true },
   { key: 'aov', label: 'AOV', type: 'currency', showStats: true },
-  { key: 'avg_products', label: 'Avg Products', type: 'number', showStats: true }
+  { key: 'avg_products', label: 'Avg Products', type: 'quantity', showStats: true }
 ] as const;
 
 const secondaryMetrics = [
@@ -109,73 +135,157 @@ const secondaryMetrics = [
 // Type pour les métriques
 type MetricKey = typeof metrics[number]['key'] | typeof secondaryMetrics[number]['key'];
 
-const renderConfidenceTooltip = (metric: MetricKey, metricsData: any) => {
-  const metricInfo = [...metrics, ...secondaryMetrics].find(m => m.key === metric);
-  
-  let absoluteValues;
+// Fonction pour déterminer l'unité selon la métrique
+const getUnit = (metric: MetricKey): 'currency' | 'percentage' | 'quantity' | undefined => {
   switch (metric) {
     case 'transaction_rate':
-      absoluteValues = {
-        variation: {
-          numerator: metricsData.value || 0,
-          denominator: metricsData.total || 0,
-          label: 'Transactions/Users'
-        },
-        control: {
-          numerator: metricsData.control_value || 0,
-          denominator: metricsData.control_total || 0,
-          label: 'Transactions/Users'
-        }
-      };
-      break;
-    case 'arpu':
-      absoluteValues = {
-        variation: {
-          numerator: metricsData.total_revenue || 0,
-          denominator: metricsData.users || 0,
-          label: 'Revenue/Users'
-        },
-        control: {
-          numerator: metricsData.control_total_revenue || 0,
-          denominator: metricsData.control_users || 0,
-          label: 'Revenue/Users'
-        }
-      };
-      break;
+      return 'percentage';
     case 'aov':
-      absoluteValues = {
-        variation: {
-          numerator: metricsData.total_revenue || 0,
-          denominator: metricsData.transactions || 0,
-          label: 'Revenue/Transactions'
-        },
-        control: {
-          numerator: metricsData.control_total_revenue || 0,
-          denominator: metricsData.control_transactions || 0,
-          label: 'Revenue/Transactions'
-        }
-      };
-      break;
+    case 'total_revenue':
+    case 'arpu':
+      return 'currency';
+    case 'avg_products':
+      return 'quantity';
+    default:
+      return undefined;
   }
+};
+
+// Mise à jour des types pour inclure l'unité
+interface MetricDetails {
+  count: number;
+  total: number;
+  rate: number;
+  unit?: string;
+}
+
+interface ConfidenceData {
+  value: number;
+  level: { label: string; color: string };
+  details?: {
+    variation: MetricDetails;
+    control: MetricDetails;
+  };
+}
+
+// Mise à jour du type RangeConfidenceData
+interface RangeConfidenceData {
+  confidence: number;
+  confidenceLevel: { label: string; color: string };
+  details?: {
+    variation: MetricDetails;
+    control: MetricDetails;
+  };
+}
+
+const renderConfidenceTooltip = (metric: MetricKey, metricsData: any) => {
+  // Déterminer la méthode et les calculs selon la métrique
+  const getConfidenceDetails = (metric: MetricKey) => {
+    switch (metric) {
+      case 'transaction_rate':
+        return {
+          test: "Fisher's Exact Test",
+          description: "Compares conversion rates between variations",
+          implementation: "stats.fisher_exact()",
+          confidenceInterval: {
+            lower: metricsData.confidence_interval?.lower || 0,
+            upper: metricsData.confidence_interval?.upper || 0,
+            metric: 'Transaction Rate'
+          }
+        };
+
+      case 'aov':
+        return {
+          test: "Mann-Whitney U Test",
+          description: "Non-parametric test for comparing AOV distributions",
+          implementation: "stats.mannwhitneyu(alternative='two-sided')",
+          confidenceInterval: {
+            lower: metricsData.confidence_interval?.lower || 0,
+            upper: metricsData.confidence_interval?.upper || 0,
+            metric: 'Average Order Value'
+          }
+        };
+
+      case 'avg_products':
+        return {
+          test: "Mann-Whitney U Test",
+          description: "Non-parametric test for comparing product quantity distributions",
+          implementation: "stats.mannwhitneyu(alternative='two-sided')",
+          confidenceInterval: {
+            lower: metricsData.confidence_interval?.lower || 0,
+            upper: metricsData.confidence_interval?.upper || 0,
+            metric: 'Average Products'
+          }
+        };
+
+      case 'total_revenue':
+        return {
+          test: "Mann-Whitney U Test",
+          description: "Non-parametric test comparing revenue distributions. Robust against typical revenue data skewness.",
+          implementation: "stats.mannwhitneyu() with alternative='two-sided'",
+          confidenceInterval: {
+            lower: metricsData.confidence_interval?.lower || 0,
+            upper: metricsData.confidence_interval?.upper || 0,
+            metric: 'Total Revenue'
+          }
+        };
+
+      case 'arpu':
+        return {
+          test: "Mann-Whitney U Test",
+          description: "Non-parametric test comparing revenue distributions per user. Robust against non-normal distributions and outliers.",
+          implementation: "stats.mannwhitneyu(alternative='two-sided') with bootstrap CI",
+          confidenceInterval: {
+            lower: metricsData.confidence_interval?.lower || 0,
+            upper: metricsData.confidence_interval?.upper || 0,
+            metric: 'Revenue per User'
+          }
+        };
+
+      default:
+        return {
+          test: "Student's t-test",
+          description: "Parametric test for comparing means",
+          implementation: "stats.ttest_ind(equal_var=False)",
+          confidenceInterval: {
+            lower: metricsData.confidence_interval?.lower || 0,
+            upper: metricsData.confidence_interval?.upper || 0,
+            metric: metric
+          }
+        };
+    }
+  };
+
+  const confidenceDetails = getConfidenceDetails(metric);
 
   return (
     <ConfidenceTooltip
-      title={STATISTICAL_METHODOLOGY[metric as keyof typeof STATISTICAL_METHODOLOGY].test}
-      description={STATISTICAL_METHODOLOGY[metric as keyof typeof STATISTICAL_METHODOLOGY].description}
-      methodUsed={STATISTICAL_METHODOLOGY[metric as keyof typeof STATISTICAL_METHODOLOGY].implementation}
-      confidenceInterval={{
-        lower: metricsData.confidence_interval?.lower || 0,
-        upper: metricsData.confidence_interval?.upper || 0,
-        metric: metricInfo?.label || ''
-      }}
+      title={confidenceDetails.test}
+      description={confidenceDetails.description}
+      methodUsed={confidenceDetails.implementation}
+      showCalculationDetails={true}
+      confidenceInterval={confidenceDetails.confidenceInterval}
       confidenceData={{
         value: metricsData.confidence || 0,
         level: getConfidenceLevel(metricsData.confidence || 0),
-        absoluteValues: absoluteValues
+        details: {
+          variation: {
+            count: metricsData.details?.variation?.count || 0,
+            total: metricsData.details?.variation?.total || 0,
+            rate: metricsData.details?.variation?.rate || 0,
+            unit: getUnit(metric)
+          },
+          control: {
+            count: metricsData.details?.control?.count || 0,
+            total: metricsData.details?.control?.total || 0,
+            rate: metricsData.details?.control?.rate || 0,
+            unit: getUnit(metric)
+          }
+        }
       }}
     />
-  )
-}
+  );
+};
 
 function TableSkeleton({ rows = 3, showSecondaryMetrics = false }) {
   return (
@@ -329,6 +439,7 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
   const [deviceFilter, setDeviceFilter] = React.useState<string>("all")
   const [categoryFilter, setCategoryFilter] = React.useState<string[]>(["all"])
   const [categories, setCategories] = React.useState<string[]>([])
+  const [devices, setDevices] = React.useState<string[]>([])
   const [isLoadingCategories, setIsLoadingCategories] = React.useState(true)
   const [revenueData, setRevenueData] = React.useState<any>(null)
   const [error, setError] = React.useState<string | null>(null)
@@ -389,111 +500,103 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
   // Extraire les catégories uniques des données
   React.useEffect(() => {
     if (data?.analysisData?.raw_data?.transaction) {
-      const uniqueCategories = Array.from(new Set(
-        data.analysisData.raw_data.transaction
-          .map((t: any) => t.item_category2)
-          .filter(Boolean)
-      )).sort()
-      setCategories(uniqueCategories)
-      setIsLoadingCategories(false)
+      // Extraire toutes les catégories uniques et nettoyer les noms
+      const allCategories = data.analysisData.raw_data.transaction
+        .flatMap((t: any) => t.item_category2?.split('|')
+          .map((cat: string) => {
+            // Nettoyer le nom de la catégorie
+            const cleanName = cat.trim().split('(')[0].trim(); // Supprimer tout ce qui est entre parenthèses
+            return cleanName;
+          })
+        )
+        .filter(Boolean);
+      
+      // Créer un Set pour avoir des valeurs uniques et supprimer les doublons
+      const uniqueCategories = Array.from(new Set(allCategories))
+        .filter(cat => !cat.includes('+')) // Supprimer les entrées avec "(+X autres)"
+        .sort();
+      
+      setCategories(uniqueCategories);
+      setIsLoadingCategories(false);
     }
-  }, [data])
+  }, [data]);
+
+  // Extraire les devices uniques
+  React.useEffect(() => {
+    if (data?.analysisData?.raw_data?.transaction) {
+      const uniqueDevices = Array.from(new Set(
+        data.analysisData.raw_data.transaction
+          .map((t: any) => t.device_category)
+          .filter(Boolean)
+      )).sort();
+      setDevices(uniqueDevices);
+    }
+  }, [data]);
 
   // Modifier la fonction fetchRevenueData
-  const fetchRevenueData = async () => {
+  const fetchRevenueData = React.useCallback(async () => {
     try {
-      setIsCalculating(true)
-      setError(null)
-      
+      setIsCalculating(true);
+      setError(null);
+
+      // Filtrer les transactions
       const filteredTransactions = data?.analysisData?.raw_data?.transaction.filter((t: any) => {
-        const matchesDevice = deviceFilter === "all" || t.device === deviceFilter;
+        const matchesDevice = deviceFilter === "all" || t.device_category === deviceFilter;
         
-        // Correction de la logique de filtrage des catégories
-        const matchesCategory = 
-          categoryFilter.includes("all") || 
-          categoryFilter.some(selectedCategory => {
-            // Vérifier si item_category2 contient la catégorie sélectionnée
-            return t.item_category2?.toLowerCase().includes(selectedCategory.toLowerCase());
-          });
-        
-        return matchesDevice && matchesCategory;
+        if (categoryFilter.includes("all")) {
+          return matchesDevice;
+        }
+
+        const transactionCategories = t.item_category2?.split('|')
+          .map((cat: string) => cat.trim())
+          .filter(Boolean) || [];
+
+        const allSelectedCategoriesPresent = categoryFilter.every(selectedCat => 
+          transactionCategories.some(cat => 
+            cat.toLowerCase().includes(selectedCat.toLowerCase())
+          )
+        );
+
+        return matchesDevice && allSelectedCategoriesPresent;
       }) || [];
 
-      // Log pour debug
-      console.log("Filtres actifs:", {
-        categories: categoryFilter,
-        device: deviceFilter
-      });
-      console.log("Exemple de transactions filtrées:", 
-        filteredTransactions
-          .slice(0, 3)
-          .map(t => ({
-            categories: t.item_category2,
-            matchedFilters: categoryFilter.filter(cat => 
-              cat !== "all" && t.item_category2?.toLowerCase().includes(cat.toLowerCase())
-            )
-          }))
-      );
-
-      // Grouper les transactions par ID
-      const groupedTransactions = groupTransactionsByID(filteredTransactions);
-      
-      // Convertir l'objet en tableau et formater les Sets en arrays
-      const aggregatedTransactions = Object.values(groupedTransactions).map(t => ({
-        ...t,
-        item_categories: Array.from(t.item_categories).join(' | '),
-        item_name_simple: Array.from(t.item_name_simple).join(' | ')
-      })) as Transaction[];
-
-      // Log pour debug
-      console.log("Transactions agrégées:", aggregatedTransactions.slice(0, 2));
-
-      setAggregatedTransactions(aggregatedTransactions);
+      // Vérifier s'il y a des transactions après filtrage
+      if (filteredTransactions.length === 0) {
+        setError('No transactions found with the selected filters');
+        setRevenueData(null);
+        setAggregatedTransactions([]);
+        return;
+      }
 
       const requestData = {
-        overall: data?.analysisData?.raw_data?.overall || [],
-        transaction: aggregatedTransactions
-      }
-      
+        raw_data: {
+          transaction: filteredTransactions,
+          overall: data?.analysisData?.raw_data?.overall
+        }
+      };
+
       const response = await fetch('http://localhost:8000/calculate-revenue', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestData),
-      })
-
-      const result = await response.json()
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestData)
+      });
 
       if (!response.ok) {
-        throw new Error(result.detail || 'Failed to fetch revenue data')
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to fetch revenue data');
       }
 
-      if (!result.success) {
-        throw new Error(result.error || 'Invalid response format')
-      }
-
-      setRevenueData(result)
-
-      // Log des données traitées
-      console.group('Données utilisées par l\'interface')
-      console.log('Données filtrées par catégorie(s):', categoryFilter)
-      console.log('Données filtrées par device:', deviceFilter)
-      console.log('Exemple de données pour les métriques:', {
-        control: result.data[result.control],
-        variation: Object.entries(result.data)
-          .find(([key]) => key !== result.control)?.[1]
-      })
-      console.log('Exemple de transactions:', filteredTransactions.slice(0, 3))
-      console.groupEnd()
+      const result = await response.json();
+      setRevenueData(result);
+      setAggregatedTransactions(result.virtual_table || []);
 
     } catch (error) {
-      console.error('Error in fetchRevenueData:', error)
-      setError(error instanceof Error ? error.message : 'An unknown error occurred')
+      console.error('Revenue calculation error:', error);
+      setError('Error calculating revenue metrics');
     } finally {
-      setIsCalculating(false)
+      setIsCalculating(false);
     }
-  }
+  }, [data, deviceFilter, categoryFilter]);
 
   // Mettre à jour les données quand les filtres changent
   React.useEffect(() => {
@@ -517,18 +620,20 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
     }
   }, [data, deviceFilter, categoryFilter])
 
-  const formatValue = (value: number, type: string) => {
+  const formatValue = (value: number | undefined, type: string) => {
+    if (value === undefined || value === null) return '-';
+    
     if (type === 'uplift') {
-      return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`
+      return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
     }
     if (type === 'rate' || type === 'confidence') {
-      return `${value.toFixed(2)}%`
+      return `${value.toFixed(2)}%`;
     }
     if (type === 'currency') {
-      return `€${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      return `€${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
-    return value.toLocaleString()
-  }
+    return value.toLocaleString();
+  };
 
   const getUpliftColor = (uplift: number) => {
     return uplift > 0 ? 'text-green-500' : 'text-red-500'
@@ -541,8 +646,14 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
   };
 
   // Fonction pour vérifier si une valeur est la plus élevée
-  const isHighestValue = (metric: string, value: number) => {
-    return value === getHighestValue(metric);
+  const isHighestValue = (metricKey: string, value: number | undefined, allVariations: Record<string, any>): boolean => {
+    if (value === undefined || !allVariations) return false;
+    
+    const values = Object.values(allVariations)
+      .map(variation => variation?.[metricKey]?.value)
+      .filter((v): v is number => v !== undefined);
+    
+    return values.length > 0 ? Math.max(...values) === value : false;
   };
 
   // Préparer les données pour le RevenueRangeTable
@@ -568,16 +679,105 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
     return result
   }, [revenueData, data?.analysisData?.raw_data?.transaction, deviceFilter, categoryFilter])
 
+  const [filteredVirtualTable, setFilteredVirtualTable] = React.useState<any[]>([]);
+
+  // Mettre à jour la table virtuelle filtrée quand les filtres changent
+  React.useEffect(() => {
+    if (revenueData?.virtual_table) {
+      const filtered = revenueData.virtual_table.filter((t: any) => {
+        const matchesDevice = deviceFilter === "all" || t.device_category === deviceFilter;
+        const matchesCategory = categoryFilter.includes("all") || 
+          categoryFilter.some(cat => t.item_category2?.toLowerCase().includes(cat.toLowerCase()));
+        return matchesDevice && matchesCategory;
+      });
+      setFilteredVirtualTable(filtered);
+    }
+  }, [revenueData?.virtual_table, deviceFilter, categoryFilter]);
+
   if (isLoading || isCalculating) {
     return <TableSkeleton rows={3} showSecondaryMetrics={true} />
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center p-6 text-red-500">
+      <div className="flex flex-col items-center justify-center p-6 space-y-4">
         <div className="text-center">
-          <p className="font-semibold">Error loading revenue data</p>
-          <p className="text-sm text-muted-foreground mt-1">{error}</p>
+          <p className="font-semibold text-red-500">{error}</p>
+          {error.includes('No transactions found') && (
+            <p className="text-sm text-muted-foreground mt-2">
+              Try adjusting your filters or selecting "All Categories" to see more results.
+            </p>
+          )}
+        </div>
+        <div className="flex justify-center gap-2 mt-4">
+          <Select
+            value={deviceFilter}
+            onValueChange={setDeviceFilter}
+          >
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="Select device" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Devices</SelectItem>
+              {devices.map(device => (
+                <SelectItem key={device} value={device}>
+                  {device}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={categoryFilter}
+            onValueChange={(value) => {
+              if (value === "all") {
+                setCategoryFilter(["all"])
+              } else {
+                const newValue = categoryFilter
+                  .filter(v => v !== "all")
+                  .includes(value)
+                  ? categoryFilter.filter(v => v !== value)
+                  : [...categoryFilter.filter(v => v !== "all"), value]
+                
+                setCategoryFilter(newValue.length ? newValue : ["all"])
+              }
+            }}
+            disabled={isLoadingCategories}
+          >
+            <SelectTrigger className="w-[280px]">
+              {isLoadingCategories ? (
+                <div className="w-full h-4 bg-muted animate-pulse rounded" />
+              ) : (
+                <SelectValue>
+                  {categoryFilter.includes("all") 
+                    ? "All Categories" 
+                    : `${categoryFilter.length} selected`}
+                </SelectValue>
+              )}
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {categories.map(category => (
+                <SelectItem 
+                  key={category} 
+                  value={category}
+                  className="flex items-center gap-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className={cn(
+                      "h-4 w-4 border rounded flex items-center justify-center",
+                      categoryFilter.includes(category) && "bg-primary border-primary"
+                    )}>
+                      {categoryFilter.includes(category) && (
+                        <Check className="h-3 w-3 text-primary-foreground" />
+                      )}
+                    </div>
+                    <span>{category}</span>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
     )
@@ -595,6 +795,23 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
     <div className="space-y-4">
       {/* Filtres */}
       <div className="flex justify-end gap-2">
+        <Select
+          value={deviceFilter}
+          onValueChange={setDeviceFilter}
+        >
+          <SelectTrigger className="w-[200px]">
+            <SelectValue placeholder="Select device" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Devices</SelectItem>
+            {devices.map(device => (
+              <SelectItem key={device} value={device}>
+                {device}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <Select
           value={categoryFilter}
           onValueChange={(value) => {
@@ -646,21 +863,6 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
             ))}
           </SelectContent>
         </Select>
-
-        <Select
-          value={deviceFilter}
-          onValueChange={setDeviceFilter}
-        >
-          <SelectTrigger className="w-[200px]">
-            <SelectValue placeholder="Filter by device" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Devices</SelectItem>
-            <SelectItem value="desktop">Desktop</SelectItem>
-            <SelectItem value="mobile">Mobile</SelectItem>
-            <SelectItem value="tablet">Tablet</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
 
       {/* Première section : Métriques principales et secondaires */}
@@ -699,11 +901,13 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
                         <div className="space-y-1.5">
                           <div className={cn(
                             "tabular-nums",
-                            isHighestValue(metric.key, metrics_data[metric.key].value) && "font-semibold"
+                            metrics_data?.[metric.key]?.value !== undefined && 
+                            isHighestValue(metric.key, metrics_data[metric.key].value, revenueData.data) && 
+                            "font-semibold"
                           )}>
-                            {formatValue(metrics_data[metric.key].value, metric.type)}
+                            {formatValue(metrics_data?.[metric.key]?.value, metric.type)}
                           </div>
-                          {variation !== revenueData.control && metric.key !== 'users' && (
+                          {variation !== revenueData.control && metric.showStats && metrics_data?.[metric.key] && (
                             <div className="space-y-1.5">
                               <div className={cn(
                                 "text-sm flex items-center justify-end gap-1 cursor-help",
@@ -731,21 +935,7 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
                                 </TooltipProvider>
                               </div>
                               <div className="text-xs text-muted-foreground cursor-help">
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger>
-                                      Stats : {formatValue(metrics_data[metric.key].confidence, 'confidence')}
-                                    </TooltipTrigger>
-                                    <TooltipContent 
-                                      side="left"
-                                      align="start"
-                                      className="p-4 bg-popover border-border shadow-lg"
-                                      sideOffset={5}
-                                    >
-                                      {renderConfidenceTooltip(metric.key, metrics_data[metric.key])}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
+                                Stats : {formatValue(metrics_data[metric.key].confidence, 'confidence')}
                               </div>
                             </div>
                           )}
@@ -789,7 +979,7 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
                             <div className="tabular-nums">
                               {formatValue(metrics_data[metric.key].value, metric.type)}
                             </div>
-                            {variation !== revenueData.control && metric.key !== 'users' && (
+                            {variation !== revenueData.control && metric.showStats && metrics_data?.[metric.key] && (
                               <div className="space-y-1.5">
                                 <div className={cn(
                                   "text-sm flex items-center justify-end gap-1 cursor-help",
@@ -817,21 +1007,7 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
                                   </TooltipProvider>
                                 </div>
                                 <div className="text-xs text-muted-foreground cursor-help">
-                                  <TooltipProvider>
-                                    <Tooltip>
-                                      <TooltipTrigger>
-                                        Stats : {formatValue(metrics_data[metric.key].confidence, 'confidence')}
-                                      </TooltipTrigger>
-                                      <TooltipContent 
-                                        side="left"
-                                        align="start"
-                                        className="p-4 bg-popover border-border shadow-lg"
-                                        sideOffset={5}
-                                      >
-                                        {renderConfidenceTooltip(metric.key, metrics_data[metric.key])}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
+                                  Stats : {formatValue(metrics_data[metric.key].confidence, 'confidence')}
                                 </div>
                               </div>
                             )}
@@ -866,10 +1042,27 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
         </div>
         {revenueData && (
           <RevenueRangeTable 
-            data={revenueRangeData} 
+            data={revenueData.data} 
             control={revenueData.control}
             isLoading={isLoading || isCalculating}
             showChart={showChart}
+            virtualTable={filteredVirtualTable}
+          />
+        )}
+      </div>
+
+      {/* Revenue Statistics */}
+      <div className="space-y-2 mt-8 border-t pt-8">
+        <h3 className="text-sm font-medium text-muted-foreground/70">Revenue Statistics</h3>
+        {revenueData && (
+          <RevenueStatistics
+            virtualTable={filteredVirtualTable}
+            filters={{
+              device: deviceFilter,
+              categories: categoryFilter
+            }}
+            control={revenueData.control}
+            data={revenueData.data}
           />
         )}
       </div>
@@ -878,67 +1071,59 @@ export function RevenueAnalysis({ data, isLoading = false }: RevenueAnalysisProp
       <div className="space-y-2 mt-8 border-t pt-8">
         <h3 className="text-sm font-medium text-muted-foreground/70">Transaction Details</h3>
         <Card className="rounded-lg border bg-card">
-          <div className="overflow-x-auto">
+          <ScrollArea className="w-full whitespace-nowrap rounded-md">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent border-b">
-                  <TableHead className="h-10 bg-muted/50 w-[15%] sticky left-0 bg-background">Variation</TableHead>
-                  <TableHead className="h-10 bg-muted/50 w-[20%]">Transaction ID</TableHead>
-                  <TableHead className="h-10 bg-muted/50 w-[35%]">Category</TableHead>
-                  <TableHead className="h-10 text-right bg-muted/50 w-[15%]">Quantity</TableHead>
-                  <TableHead className="h-10 text-right bg-muted/50 w-[15%]">Revenue</TableHead>
+                  <TableHead className="h-10 bg-muted/50 sticky left-0 min-w-[200px] z-10">Variation</TableHead>
+                  <TableHead className="h-10 bg-muted/50 min-w-[150px]">Transaction ID</TableHead>
+                  <TableHead className="h-10 bg-muted/50 min-w-[400px]">Product</TableHead>
+                  <TableHead className="h-10 bg-muted/50 min-w-[300px]">Category</TableHead>
+                  <TableHead className="h-10 bg-muted/50 min-w-[100px] text-right">Quantity</TableHead>
+                  <TableHead className="h-10 bg-muted/50 min-w-[150px] text-right">Revenue</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {revenueData && aggregatedTransactions
-                  .filter(t => t.variation === revenueData.control)
-                  .slice(0, 50)
+                {revenueData?.virtual_table
+                  ?.slice(0, 10)
                   .map((transaction) => (
                     <TableRow key={transaction.transaction_id} className="h-14">
-                      <TableCell className="font-medium w-[15%] sticky left-0 bg-background">{transaction.variation}</TableCell>
-                      <TableCell className="w-[20%]">{transaction.transaction_id}</TableCell>
-                      <TableCell className="w-[35%] truncate">
+                      <TableCell className="font-medium sticky left-0 bg-background min-w-[200px] z-10">
+                        {transaction.variation}
+                      </TableCell>
+                      <TableCell className="min-w-[150px]">{transaction.transaction_id}</TableCell>
+                      <TableCell className="min-w-[400px]">
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger className="text-left w-full truncate block">
-                              {transaction.item_categories}
+                              {transaction.item_name}
                             </TooltipTrigger>
                             <TooltipContent>
-                              {transaction.item_categories}
+                              {transaction.item_name}
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
                       </TableCell>
-                      <TableCell className="text-right w-[15%]">{transaction.quantity}</TableCell>
-                      <TableCell className="text-right w-[15%]">€{transaction.revenue.toFixed(2)}</TableCell>
-                    </TableRow>
-                  ))}
-                {revenueData && aggregatedTransactions
-                  .filter(t => t.variation !== revenueData.control)
-                  .slice(0, 50)
-                  .map((transaction) => (
-                    <TableRow key={transaction.transaction_id} className="h-14">
-                      <TableCell className="font-medium w-[15%] sticky left-0 bg-background">{transaction.variation}</TableCell>
-                      <TableCell className="w-[20%]">{transaction.transaction_id}</TableCell>
-                      <TableCell className="w-[35%] truncate">
+                      <TableCell className="min-w-[300px]">
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger className="text-left w-full truncate block">
-                              {transaction.item_categories}
+                              {transaction.item_category2}
                             </TooltipTrigger>
                             <TooltipContent>
-                              {transaction.item_categories}
+                              {transaction.item_category2}
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
                       </TableCell>
-                      <TableCell className="text-right w-[15%]">{transaction.quantity}</TableCell>
-                      <TableCell className="text-right w-[15%]">€{transaction.revenue.toFixed(2)}</TableCell>
+                      <TableCell className="text-right min-w-[100px]">{transaction.quantity}</TableCell>
+                      <TableCell className="text-right min-w-[150px]">€{transaction.revenue.toFixed(2)}</TableCell>
                     </TableRow>
                   ))}
               </TableBody>
             </Table>
-          </div>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
         </Card>
       </div>
     </div>

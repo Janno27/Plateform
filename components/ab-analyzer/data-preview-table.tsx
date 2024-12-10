@@ -26,8 +26,9 @@ const COLUMNS_CONFIG = {
     'variation',
     'device_category',
     'transaction_id',
-    'item_name_simple',
+    'item_category2',
     'quantity',
+    'products_summary',
     'revenue'
   ],
   overall: [
@@ -74,6 +75,12 @@ export function DataPreviewTable({ data, isLoading, currency, type }: DataPrevie
     if (column === 'transaction_id') {
       return value.toString().slice(0, 11) + (value.length > 11 ? '...' : '')
     }
+    if (column === 'products_summary') {
+      return value
+    }
+    if (column === 'quantity') {
+      return parseInt(value).toLocaleString()
+    }
     if (column.toLowerCase().includes('revenue')) {
       const symbol = CURRENCY_SYMBOLS[currency] || currency
       return `${symbol}${value?.toLocaleString()}`
@@ -84,6 +91,10 @@ export function DataPreviewTable({ data, isLoading, currency, type }: DataPrevie
     if (typeof value === 'number') {
       return value.toLocaleString()
     }
+    if (column === 'item_category2') {
+      const text = value.toString()
+      return text.length > 15 ? `${text.slice(0, 15)}...` : text
+    }
     return value.toString()
   }
 
@@ -93,6 +104,14 @@ export function DataPreviewTable({ data, isLoading, currency, type }: DataPrevie
       .split('_')
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ')
+  }
+
+  // Ajoutez ces styles à la cellule pour la colonne item_name_simple
+  const getCellStyle = (columnName: string) => {
+    if (columnName === 'item_category2') {
+      return 'max-w-[150px] truncate'
+    }
+    return ''
   }
 
   return (
@@ -107,7 +126,8 @@ export function DataPreviewTable({ data, isLoading, currency, type }: DataPrevie
                     key={column} 
                     className={cn(
                       "whitespace-nowrap px-4",
-                      column === 'variation' && "font-semibold sticky left-0 bg-background z-10"
+                      column === 'variation' && "font-semibold sticky left-0 bg-background z-10",
+                      getCellStyle(column)
                     )}
                   >
                     {getColumnTitle(column)}
@@ -124,8 +144,10 @@ export function DataPreviewTable({ data, isLoading, currency, type }: DataPrevie
                       className={cn(
                         "px-4",
                         column === 'variation' && "font-medium sticky left-0 bg-background z-10",
-                        column === 'transaction_id' && "font-mono text-sm"
+                        column === 'transaction_id' && "font-mono text-sm",
+                        getCellStyle(column)
                       )}
+                      title={column === 'item_name_simple' ? row[column] : undefined}
                     >
                       {formatValue(row[column], column)}
                     </TableCell>

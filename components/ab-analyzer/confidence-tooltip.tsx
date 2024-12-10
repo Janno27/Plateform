@@ -4,14 +4,14 @@ import { TrendingUp } from "lucide-react"
 interface ConfidenceTooltipProps {
   title: string
   description: string
-  methodUsed?: string
+  methodUsed: string
   showCalculationDetails?: boolean
-  confidenceInterval?: {
+  confidenceInterval: {
     lower: number
     upper: number
     metric: string
   }
-  confidenceData?: {
+  confidenceData: {
     value: number
     level: {
       label: string
@@ -22,11 +22,13 @@ interface ConfidenceTooltipProps {
         count: number
         total: number
         rate: number
+        unit?: 'currency' | 'percentage' | 'quantity'
       }
       control: {
         count: number
         total: number
         rate: number
+        unit?: 'currency' | 'percentage' | 'quantity'
       }
     }
   }
@@ -36,10 +38,42 @@ export function ConfidenceTooltip({
   title, 
   description, 
   methodUsed,
-  showCalculationDetails = false,
+  showCalculationDetails = true,
   confidenceInterval,
   confidenceData 
 }: ConfidenceTooltipProps) {
+  const formatValue = (value: number | undefined, unit?: string, type: 'count' | 'total' | 'rate' = 'count'): string => {
+    if (value === undefined) return '-';
+    
+    const numValue = Number(value);
+    if (isNaN(numValue)) return '-';
+    
+    const roundedValue = Number(numValue.toFixed(2));
+    
+    switch (type) {
+      case 'count':
+        if (unit === 'currency') {
+          return `€${roundedValue.toLocaleString()}`;
+        }
+        return roundedValue.toLocaleString();
+      
+      case 'total':
+        return roundedValue.toLocaleString();
+      
+      case 'rate':
+        switch (unit) {
+          case 'currency':
+            return `€${roundedValue.toLocaleString()}`;
+          case 'percentage':
+            return `${roundedValue}%`;
+          case 'quantity':
+            return roundedValue.toFixed(2);
+          default:
+            return roundedValue.toLocaleString();
+        }
+    }
+  };
+
   return (
     <div className="w-[380px] text-left">
       <div className="flex flex-col gap-4">
@@ -52,7 +86,7 @@ export function ConfidenceTooltip({
               <p className="text-xs text-muted-foreground/80 flex items-baseline gap-1">
                 <span className="shrink-0 text-muted-foreground">Confidence Interval ({confidenceInterval.metric}):</span>
                 <span className="font-medium text-muted-foreground/60">
-                  [{confidenceInterval.lower.toFixed(2)}%, {confidenceInterval.upper.toFixed(2)}%]
+                  [{formatValue(confidenceInterval.lower)}%, {formatValue(confidenceInterval.upper)}%]
                 </span>
               </p>
             )}
@@ -81,52 +115,76 @@ export function ConfidenceTooltip({
             </p>
           </div>
 
-          {showCalculationDetails && confidenceData?.details && (
+          {confidenceData?.details && (
             <div className="space-y-2 bg-muted/50 p-3 rounded-md">
               <span className="text-xs text-muted-foreground font-medium">Calculation Details</span>
-              <div className="grid grid-cols-2 gap-4 text-[11px]">
-                <div className="space-y-1.5">
-                  <span className="text-muted-foreground font-medium">Control</span>
-                  <div className="space-y-1 bg-background/50 p-2 rounded-sm">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-xs text-muted-foreground">Control</span>
+                  <div className="space-y-1 mt-1">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Count:</span>
-                      <span className="font-medium text-muted-foreground/80">
-                        {confidenceData.details.control.count}
+                      <span className="font-medium text-primary/90">
+                        {formatValue(
+                          confidenceData.details.control.count,
+                          confidenceData.details.control.unit,
+                          'count'
+                        )}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Total:</span>
-                      <span className="font-medium text-muted-foreground/80">
-                        {confidenceData.details.control.total}
+                      <span className="font-medium text-primary/90">
+                        {formatValue(
+                          confidenceData.details.control.total,
+                          undefined,
+                          'total'
+                        )}
                       </span>
                     </div>
                     <div className="flex justify-between border-t border-border/50 pt-1 mt-1">
                       <span className="text-muted-foreground">Rate:</span>
                       <span className="font-medium text-primary/90">
-                        {confidenceData.details.control.rate.toFixed(1)}%
+                        {formatValue(
+                          confidenceData.details.control.rate,
+                          confidenceData.details.control.unit,
+                          'rate'
+                        )}
                       </span>
                     </div>
                   </div>
                 </div>
-                <div className="space-y-1.5">
-                  <span className="text-muted-foreground font-medium">Variation</span>
-                  <div className="space-y-1 bg-background/50 p-2 rounded-sm">
+                <div>
+                  <span className="text-xs text-muted-foreground">Variation</span>
+                  <div className="space-y-1 mt-1">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Count:</span>
-                      <span className="font-medium text-muted-foreground/80">
-                        {confidenceData.details.variation.count}
+                      <span className="font-medium text-primary/90">
+                        {formatValue(
+                          confidenceData.details.variation.count,
+                          confidenceData.details.variation.unit,
+                          'count'
+                        )}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Total:</span>
-                      <span className="font-medium text-muted-foreground/80">
-                        {confidenceData.details.variation.total}
+                      <span className="font-medium text-primary/90">
+                        {formatValue(
+                          confidenceData.details.variation.total,
+                          undefined,
+                          'total'
+                        )}
                       </span>
                     </div>
                     <div className="flex justify-between border-t border-border/50 pt-1 mt-1">
                       <span className="text-muted-foreground">Rate:</span>
                       <span className="font-medium text-primary/90">
-                        {confidenceData.details.variation.rate.toFixed(1)}%
+                        {formatValue(
+                          confidenceData.details.variation.rate,
+                          confidenceData.details.variation.unit,
+                          'rate'
+                        )}
                       </span>
                     </div>
                   </div>

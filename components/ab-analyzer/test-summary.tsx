@@ -3,7 +3,7 @@
 import * as React from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Upload, Link, ArrowUpCircle, FileIcon, X, ArrowLeft, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen, ChevronDown, Plus } from "lucide-react"
+import { Upload, Link, ArrowUpCircle, FileIcon, X, ArrowLeft, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen, ChevronDown, Plus, RefreshCw } from "lucide-react"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import {
@@ -92,6 +92,10 @@ export function TestSummary({ onCollapse, onAnalysisStart, onProcessStepChange, 
   const [isFileZoneOpen, setIsFileZoneOpen] = React.useState(true)
   const [processStep, setProcessStep] = React.useState<'initial' | 'processing' | 'analyzed'>('initial')
   const [isPreparationComplete, setIsPreparationComplete] = useState(false)
+  const [isAggregated, setIsAggregated] = useState(false)
+  const [aggregatedData, setAggregatedData] = useState<any>(null)
+  const [randomSamples, setRandomSamples] = useState<any[]>([])
+  const [showSamples, setShowSamples] = useState(false)
 
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const imageAInputRef = React.useRef<HTMLInputElement>(null)
@@ -203,16 +207,9 @@ export function TestSummary({ onCollapse, onAnalysisStart, onProcessStepChange, 
         }
       }
 
-      toast({
-        title: "Analyse en cours",
-        description: (
-          <div className="w-full space-y-2">
-            <p>Traitement de vos données...</p>
-            <Progress value={progress} className="w-full" />
-          </div>
-        ),
-        duration: 10000,
-      })
+      // Réinitialiser l'état d'agrégation
+      setIsAggregated(false)
+      setAggregatedData(null)
 
       const response = await fetch('http://localhost:8000/analyze', {
         method: 'POST',
@@ -235,8 +232,8 @@ export function TestSummary({ onCollapse, onAnalysisStart, onProcessStepChange, 
       onProcessStepChange('analyzed')
       
       toast({
-        title: "Analyse terminée",
-        description: "Les données ont été analysées avec succès",
+        title: "Data Loaded",
+        description: "Your data has been loaded successfully. You can now aggregate it.",
         duration: 3000,
       })
 
@@ -253,6 +250,66 @@ export function TestSummary({ onCollapse, onAnalysisStart, onProcessStepChange, 
     } finally {
       setIsAnalyzing(false)
     }
+  }
+
+  const handleAggregateData = async () => {
+    try {
+      if (!analysisData?.raw_data?.transaction) {
+        throw new Error("Aucune donnée de transaction à agréger")
+      }
+
+      const response = await fetch('http://localhost:8000/aggregate-transactions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(analysisData.raw_data.transaction)
+      })
+
+      if (!response.ok) {
+        throw new Error(`Erreur HTTP: ${response.status}`)
+      }
+
+      const result = await response.json()
+      
+      if (result.success) {
+        setAggregatedData({
+          ...analysisData,
+          raw_data: {
+            ...analysisData.raw_data,
+            transaction: result.data
+          }
+        })
+        setIsAggregated(true)
+        
+        toast({
+          title: "Data Aggregated",
+          description: "Your data has been aggregated successfully",
+          duration: 3000,
+        })
+      }
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Erreur",
+        description: error instanceof Error ? error.message : "Une erreur est survenue lors de l'agrégation",
+      })
+    }
+  }
+
+  const generateRandomSamples = () => {
+    const data = isAggregated 
+      ? aggregatedData?.raw_data?.transaction 
+      : analysisData?.raw_data?.transaction
+
+    if (!data || data.length === 0) return
+
+    // Sélectionner un seul index aléatoire
+    const randomIndex = Math.floor(Math.random() * data.length)
+    
+    // Récupérer l'échantillon
+    setRandomSamples([data[randomIndex]])
+    setShowSamples(true)
   }
 
   return (
@@ -512,7 +569,7 @@ export function TestSummary({ onCollapse, onAnalysisStart, onProcessStepChange, 
                     : "opacity-0 hidden"
                 )}>
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-medium">Aperçu des données</h3>
+                    <h3 className="text-sm font-medium">Data Overview</h3>
                     <CurrencySelector 
                       value={currency}
                       onValueChange={onCurrencyChange}
@@ -520,16 +577,88 @@ export function TestSummary({ onCollapse, onAnalysisStart, onProcessStepChange, 
                   </div>
                   <div className="space-y-4">
                     <div>
-                      <h4 className="text-sm font-medium mb-2">Données de transaction</h4>
+                      <div className="flex justify-between items-center mb-6">
+                        <div className="flex gap-4">
+                          {processStep === 'analyzed' && !isAggregated && (
+                            <Button 
+                              onClick={handleAggregateData}
+                              variant="outline"
+                            >
+                              Aggregate Data
+                            </Button>
+                          )}
+                          {processStep === 'analyzed' && (
+                            <Button
+                              onClick={generateRandomSamples}
+                              variant="outline"
+                              size="sm"
+                            >
+                              <RefreshCw className="h-4 w-4 mr-2" />
+                              Check Samples
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      {showSamples && randomSamples.length > 0 && (
+                        <div className="mb-6 space-y-2">
+                          <div className="flex justify-between items-center mb-3">
+                            <h5 className="text-sm font-medium">Random Sample</h5>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setShowSamples(false)}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <div className="grid gap-3">
+                            {randomSamples.map((sample, index) => (
+                              <div 
+                                key={index}
+                                className="p-4 rounded-md bg-muted/50 space-y-3"
+                              >
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <span className="text-xs text-muted-foreground">Transaction ID</span>
+                                    <div className="font-mono text-sm">{sample.transaction_id}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-xs text-muted-foreground">Variation</span>
+                                    <div className="text-sm">{sample.variation}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-xs text-muted-foreground">Revenue</span>
+                                    <div className="text-sm font-medium">{sample.revenue} {currency}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-xs text-muted-foreground">Quantity</span>
+                                    <div className="text-sm">{sample.quantity}</div>
+                                  </div>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-muted-foreground block mb-1">Category</span>
+                                  <div 
+                                    className="text-sm max-w-[150px] truncate" 
+                                    title={sample.item_category2}
+                                  >
+                                    {sample.item_category2}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       <DataPreviewTable 
-                        data={analysisData?.raw_data?.transaction || []} 
+                        data={isAggregated ? aggregatedData?.raw_data?.transaction : analysisData?.raw_data?.transaction || []} 
                         isLoading={isAnalyzing}
                         currency={currency}
                         type="transaction"
                       />
                     </div>
                     <div>
-                      <h4 className="text-sm font-medium mb-2">Données globales</h4>
                       <DataPreviewTable 
                         data={analysisData?.raw_data?.overall || []} 
                         isLoading={isAnalyzing}
@@ -538,7 +667,7 @@ export function TestSummary({ onCollapse, onAnalysisStart, onProcessStepChange, 
                       />
                     </div>
                   </div>
-                  <div className="flex justify-end gap-4">
+                  <div className="flex justify-end gap-4 mt-8">
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -549,6 +678,8 @@ export function TestSummary({ onCollapse, onAnalysisStart, onProcessStepChange, 
                         setSelectedFiles([])
                         setNewTest({})
                         setIsCreatingNew(true)
+                        setIsAggregated(false)
+                        setAggregatedData(null)
                       }}
                     >
                       Reset
@@ -561,9 +692,18 @@ export function TestSummary({ onCollapse, onAnalysisStart, onProcessStepChange, 
                           hypothesis: newTest.hypothesis,
                           imageA: newTest.imageA,
                           imageB: newTest.imageB,
-                          analysisData: analysisData
+                          analysisData: isAggregated ? aggregatedData : analysisData,
+                          currency: currency
                         })
                       }}
+                      disabled={!isAggregated || !currency}
+                      title={
+                        !currency 
+                          ? "Please select a currency before running the analysis" 
+                          : !isAggregated 
+                            ? "Please aggregate your data before running the analysis" 
+                            : ""
+                      }
                     >
                       Run Analysis
                     </Button>

@@ -30,7 +30,7 @@ interface OverviewTableProps {
 }
 
 // Type pour les métriques
-type MetricKey = 'users' | 'add_to_cart_rate' | 'transaction_rate' | 'revenue';
+type MetricKey = 'users' | 'add_to_cart_rate' | 'transaction_rate' | 'total_revenue';
 
 const STATISTICAL_METHODOLOGY = {
   users: {
@@ -48,7 +48,7 @@ const STATISTICAL_METHODOLOGY = {
     description: "Compares conversion rates between variations. Ideal for binary outcomes (converted vs not converted).",
     implementation: "stats.fisher_exact() for precise probability calculation"
   },
-  revenue: {
+  total_revenue: {
     test: "Mann-Whitney U Test",
     description: "Non-parametric test comparing revenue distributions. Robust against typical revenue data skewness.",
     implementation: "stats.mannwhitneyu() with alternative='two-sided'"
@@ -69,7 +69,9 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
   const [removeOutliers, setRemoveOutliers] = React.useState(false)
   const [processedData, setProcessedData] = React.useState<any>(null)
 
-  const formatValue = (value: number, type: string) => {
+  const formatValue = (value: number | undefined, type: string): string => {
+    if (value === undefined) return '-';
+    
     if (type === 'uplift') {
       return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
     }
@@ -86,14 +88,14 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
     return uplift > 0 ? 'text-green-500' : 'text-red-500';
   };
 
-  type MetricKey = 'users' | 'add_to_cart_rate' | 'transaction_rate' | 'revenue';
+  type MetricKey = 'users' | 'add_to_cart_rate' | 'transaction_rate' | 'total_revenue';
 
   const getUpliftTooltip = (metricKey: MetricKey) => {
     const tooltips: Record<MetricKey, string> = {
       users: "Difference relative of the number of users between the variation and the control",
       add_to_cart_rate: "Difference relative of the add-to-cart rate between the variation and the control",
       transaction_rate: "Difference relative of the conversion rate between the variation and the control",
-      revenue: "Difference relative of the average revenue per user between the variation and the control"
+      total_revenue: "Difference relative of the average revenue per user between the variation and the control"
     };
     return tooltips[metricKey];
   };
@@ -103,7 +105,7 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
       users: "Student's t-test: Compares means between two independent samples",
       add_to_cart_rate: "Fisher's exact test: Compares proportions between two independent groups",
       transaction_rate: "Fisher's exact test: Compares proportions between two independent groups",
-      revenue: "Mann-Whitney U test: Compares distributions between two independent samples (suitable for non-normal data)"
+      total_revenue: "Mann-Whitney U test: Compares distributions between two independent samples (suitable for non-normal data)"
     };
     return tooltips[metricKey];
   };
@@ -224,8 +226,8 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
         uplift: 0,
         confidence: 0
       },
-      revenue: {
-        value: data.data[Object.keys(data.data)[0]]?.revenue?.control_value || 0,
+      total_revenue: {
+        value: data.data[Object.keys(data.data)[0]]?.total_revenue?.control_value || 0,
         uplift: 0,
         confidence: 0
       }
@@ -237,13 +239,18 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
     { key: 'users', label: 'Users', type: 'number', showStats: false },
     { key: 'add_to_cart_rate', label: 'Add to Cart Rate', type: 'rate', showStats: true },
     { key: 'transaction_rate', label: 'Transaction Rate', type: 'rate', showStats: true },
-    { key: 'revenue', label: 'Revenue', type: 'revenue', showStats: true }
+    { key: 'total_revenue', label: 'Total Revenue', type: 'currency', showStats: true }
   ];
 
-  // Fonction pour déterminer si une valeur est la plus élevée
-  const isHighestValue = (metric: string, value: number, allValues: any) => {
-    const values = Object.values(allValues).map((m: any) => m[metric]?.value || 0);
-    return value === Math.max(...values);
+  // Fonction pour vérifier si une valeur est la plus élevée
+  const isHighestValue = (metricKey: string, value: number | undefined, allVariations: Record<string, any>): boolean => {
+    if (value === undefined) return false;
+    
+    const values = Object.values(allVariations)
+      .map(variation => (variation as any)[metricKey]?.value)
+      .filter((v): v is number => v !== undefined);
+    
+    return values.length > 0 ? Math.max(...values) === value : false;
   };
 
   const renderOutliersTooltip = () => (
@@ -274,19 +281,34 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
     </div>
   )
 
-  const renderConfidenceTooltip = (metricKey: MetricKey, metricsData: any) => (
+  const renderConfidenceTooltip = (metric: MetricKey, metricsData: any) => (
     <ConfidenceTooltip
-      title={STATISTICAL_METHODOLOGY[metricKey].test}
-      description={STATISTICAL_METHODOLOGY[metricKey].description}
-      methodUsed={STATISTICAL_METHODOLOGY[metricKey].implementation}
+      title={STATISTICAL_METHODOLOGY[metric].test}
+      description={STATISTICAL_METHODOLOGY[metric].description}
+      methodUsed={STATISTICAL_METHODOLOGY[metric].implementation}
+      showCalculationDetails={true}
       confidenceInterval={{
         lower: metricsData.confidence_interval?.lower || 0,
         upper: metricsData.confidence_interval?.upper || 0,
-        metric: metrics.find(m => m.key === metricKey)?.label || ''
+        metric: metrics.find(m => m.key === metric)?.label || ''
       }}
       confidenceData={{
         value: metricsData.confidence || 0,
-        level: getConfidenceLevel(metricsData.confidence || 0)
+        level: getConfidenceLevel(metricsData.confidence || 0),
+        details: {
+          variation: {
+            count: metricsData.details?.variation?.count || 0,
+            total: metricsData.details?.variation?.total || 0,
+            rate: metricsData.details?.variation?.rate || 0,
+            unit: metricsData.details?.variation?.unit || ''
+          },
+          control: {
+            count: metricsData.details?.control?.count || 0,
+            total: metricsData.details?.control?.total || 0,
+            rate: metricsData.details?.control?.rate || 0,
+            unit: metricsData.details?.control?.unit || ''
+          }
+        }
       }}
     />
   )
@@ -348,49 +370,46 @@ export function OverviewTable({ data, isLoading }: OverviewTableProps) {
               >
                 <TableCell className="font-medium">{variation}</TableCell>
                 {metrics.map(metric => (
-                  <TableCell key={metric.key} className="text-right p-4">
-                    <div className="space-y-1.5">
-                      <div className={cn(
-                        "tabular-nums",
-                        isHighestValue(metric.key, metrics_data[metric.key].value, allVariations) && "font-semibold"
-                      )}>
-                        {formatValue(metrics_data[metric.key].value, metric.type)}
-                      </div>
-                      {variation !== data.control && metric.showStats && (
+                  <TableCell key={metric.key} className="text-right">
+                    <div className="space-y-1">
+                      {metrics_data[metric.key] ? (
                         <>
-                          <TooltipProvider>
-                            <Tooltip delayDuration={0}>
-                              <TooltipTrigger asChild>
-                                <div className="space-y-1.5">
-                                  <div className={cn(
-                                    "text-sm flex items-center justify-end gap-1 cursor-help transition-colors",
-                                    getUpliftColor(metrics_data[metric.key].uplift)
-                                  )}>
-                                    {metrics_data[metric.key].uplift > 0 ? (
-                                      <ArrowUpIcon className="h-4 w-4" />
-                                    ) : (
-                                      <ArrowDownIcon className="h-4 w-4" />
-                                    )}
-                                    {formatValue(metrics_data[metric.key].uplift, 'uplift')}
-                                  </div>
-                                  <div className={cn(
-                                    "text-xs text-muted-foreground hover:text-muted-foreground/80 transition-colors"
-                                  )}>
-                                    Stats : {formatValue(metrics_data[metric.key].confidence, 'confidence')}
-                                  </div>
-                                </div>
-                              </TooltipTrigger>
-                              <TooltipContent 
-                                side="left"
-                                align="start"
-                                className="p-4 bg-popover border-border shadow-lg"
-                                sideOffset={5}
-                              >
-                                {renderConfidenceTooltip(metric.key as MetricKey, metrics_data[metric.key])}
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
+                          <div className={cn(
+                            "tabular-nums",
+                            isHighestValue(metric.key, metrics_data[metric.key]?.value, allVariations) && "font-semibold"
+                          )}>
+                            {formatValue(metrics_data[metric.key]?.value, metric.type)}
+                          </div>
+                          {variation !== data.control && (
+                            <div className="space-y-1">
+                              <div className={cn(
+                                "text-sm",
+                                getUpliftColor(metrics_data[metric.key]?.uplift || 0)
+                              )}>
+                                {formatValue(metrics_data[metric.key]?.uplift, 'uplift')}
+                              </div>
+                              <div className="text-xs text-muted-foreground cursor-help">
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger>
+                                      Stats : {formatValue(metrics_data[metric.key]?.confidence, 'confidence')}
+                                    </TooltipTrigger>
+                                    <TooltipContent 
+                                      side="left"
+                                      align="start"
+                                      className="p-4 bg-popover border-border shadow-lg"
+                                      sideOffset={5}
+                                    >
+                                      {renderConfidenceTooltip(metric.key as MetricKey, metrics_data[metric.key])}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </div>
+                            </div>
+                          )}
                         </>
+                      ) : (
+                        <div className="text-muted-foreground">-</div>
                       )}
                     </div>
                   </TableCell>

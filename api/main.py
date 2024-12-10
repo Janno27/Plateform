@@ -199,12 +199,17 @@ async def calculate_overview(data: OverviewRequest):
                 detail="Overall data is required"
             )
         
-        processor = DataProcessor()
-        try:
-            result = processor.calculate_overview_metrics({
+        # Restructurer les données pour correspondre au format attendu
+        formatted_data = {
+            'raw_data': {
                 'overall': data.overall,
                 'transaction': data.transaction
-            })
+            }
+        }
+        
+        processor = DataProcessor()
+        try:
+            result = processor.calculate_overview_metrics(formatted_data)
             
             if result['success']:
                 logger.info("Overview calculation successful")
@@ -230,14 +235,94 @@ async def calculate_overview(data: OverviewRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/calculate-revenue")
-async def calculate_revenue(data: dict):
+async def calculate_revenue(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Calcule les métriques de revenu avec les tests statistiques appropriés.
+    """
     try:
+        logger.info("Starting revenue calculation")
+        logger.info(f"Input data structure: {list(data.keys())}")
+        
+        if not data.get('raw_data', {}).get('transaction'):
+            raise HTTPException(
+                status_code=500,
+                detail="Missing transaction or overall data"
+            )
+        
         processor = DataProcessor()
         result = processor.calculate_revenue_metrics(data)
+        
+        if not result['success']:
+            raise HTTPException(
+                status_code=500,
+                detail=result['error']
+            )
+            
+        logger.info("Revenue calculation successful")
+        logger.info(f"Number of variations: {len(result['data'])}")
+        logger.info(f"Control variation: {result['control']}")
+        logger.info(f"Virtual table size: {len(result['virtual_table'])}")
+        
         return result
+        
     except Exception as e:
         logger.error(f"Error in calculate_revenue endpoint: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=str(e)
+        )
+
+@app.post("/validate-data")
+async def validate_data(data: List[Dict[str, Any]]):
+    try:
+        processor = DataProcessor()
+        validation_results = processor.validate_transaction_data(data)
+        return validation_results
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de la validation: {str(e)}"
+        )
+
+@app.post("/create-analysis")
+async def create_analysis(data: Dict[str, Any]):
+    try:
+        processor = DataProcessor()
+        analysis_table = processor.create_analysis_table(data)
+        
+        return {
+            'success': True,
+            'data': analysis_table.to_dict('records'),
+            'metadata': {
+                'columns': analysis_table.columns.tolist(),
+                'metrics': {
+                    'conversion_rate': 'Percentage of users who made a purchase',
+                    'aov': 'Average Order Value',
+                    'arpu': 'Average Revenue Per User',
+                    'items_per_order': 'Average number of items per order'
+                }
+            }
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error creating analysis: {str(e)}"
+        )
+
+@app.get("/analysis-table-preview")
+async def get_analysis_table_preview():
+    """Endpoint pour visualiser la dernière table d'analyse créée."""
+    try:
+        processor = DataProcessor()
+        if hasattr(processor, 'last_analysis_table'):
+            return {
+                'columns': processor.last_analysis_table.columns.tolist(),
+                'data': processor.last_analysis_table.to_dict('records'),
+                'summary': processor.last_analysis_table.describe().to_dict()
+            }
+        return {"message": "No analysis table available"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving analysis table: {str(e)}"
         )

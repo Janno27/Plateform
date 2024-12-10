@@ -2,6 +2,7 @@
 
 import { ABAnalyzer } from "@/components/ab-analyzer"
 import { StatisticsPanel } from "@/components/ab-analyzer/statistics-panel"
+import { CommentBox } from "@/components/ab-analyzer/comment-box"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
 
@@ -13,6 +14,11 @@ interface FileData {
 interface Filter {
   device_category: string[]
   item_category2: string[]
+}
+
+interface CommentPosition {
+  x: number
+  y: number
 }
 
 export default function AnalyzerPage() {
@@ -28,6 +34,10 @@ export default function AnalyzerPage() {
   const [transactionData, setTransactionData] = useState<FileData | null>(null)
   const [results, setResults] = useState<any>(null)
   const [isSummaryCollapsed, setIsSummaryCollapsed] = useState(false)
+  const [activeComment, setActiveComment] = useState<{
+    tool: "comment" | "highlight" | "screenshot"
+    position: CommentPosition
+  } | null>(null)
 
   const handleAnalysisStart = async (data: any) => {
     setShowAnalysis(true)
@@ -53,6 +63,23 @@ export default function AnalyzerPage() {
       }
     })
     // Re-analyser les données avec les nouveaux filtres
+  }
+
+  const handleToolSelect = (tool: "comment" | "highlight" | "screenshot", position: CommentPosition) => {
+    setActiveComment({ tool, position })
+  }
+
+  const handleCommentSave = async (comment: string) => {
+    if (!activeComment) return
+
+    // Ici vous pourriez sauvegarder le commentaire avec sa position
+    console.log('Saving comment:', {
+      type: activeComment.tool,
+      content: comment,
+      position: activeComment.position
+    })
+
+    setActiveComment(null)
   }
 
   return (
@@ -92,6 +119,25 @@ export default function AnalyzerPage() {
             filters={filters}
             results={results}
             isCollapsed={isSummaryCollapsed}
+            onToolSelect={handleToolSelect}
+          />
+        </div>
+      )}
+
+      {/* Boîte de commentaire flottante */}
+      {activeComment && (
+        <div className="fixed inset-0 pointer-events-none z-50">
+          <CommentBox
+            className="absolute pointer-events-auto"
+            style={{
+              position: 'fixed',
+              left: `${activeComment.position.x}px`,
+              top: `${activeComment.position.y}px`,
+              transform: 'translate(-50%, -50%)'
+            }}
+            type={activeComment.tool}
+            onSave={handleCommentSave}
+            onClose={() => setActiveComment(null)}
           />
         </div>
       )}
