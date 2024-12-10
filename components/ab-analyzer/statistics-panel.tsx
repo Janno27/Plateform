@@ -55,6 +55,34 @@ export function StatisticsPanel({
   const [notes, setNotes] = React.useState<AnalysisNote[]>([])
   const [activeTab, setActiveTab] = React.useState("overview")
 
+  // Mémorisation des contenus des tabs
+  const tabContents = React.useMemo(() => ({
+    overview: (
+      <div className="h-full overflow-auto relative">
+        <OverviewTable 
+          data={overviewData} 
+          isLoading={isLoadingOverview}
+        />
+      </div>
+    ),
+    engagement: <div>Engagement content</div>,
+    funnel: <div>Funnel content</div>,
+    revenue: (
+      <div className="h-full overflow-auto">
+        <RevenueAnalysis 
+          data={testData} 
+          isLoading={isLoadingOverview}
+        />
+      </div>
+    ),
+    raw: (
+      <RawDataTable 
+        data={testData} 
+        currency={testData.currency || currency}
+      />
+    )
+  }), [overviewData, isLoadingOverview, testData, currency])
+
   const fetchOverviewData = React.useCallback(async () => {
     try {
       setIsLoadingOverview(true)
@@ -105,15 +133,6 @@ export function StatisticsPanel({
       const result = await response.json()
       if (result.success) {
         setAnalysisTable(result.data)
-        
-        // Affichage de la table virtuelle dans la console du navigateur
-        console.group('=== VIRTUAL ANALYSIS TABLE ===')
-        console.log('Structure:')
-        console.log('Total rows:', result.data.length)
-        console.log('Columns:', Object.keys(result.data[0]))
-        console.log('\nFirst 10 rows:')
-        console.table(result.data.slice(0, 10))
-        console.groupEnd()
       }
     } catch (error) {
       // Silent error
@@ -141,7 +160,6 @@ export function StatisticsPanel({
       }
     } catch (error) {
       console.error("Erreur lors du chargement des notes:", error)
-      // Réinitialiser les notes si le JSON est invalide
       localStorage.setItem("analysis-notes", JSON.stringify([]))
     }
   }, [])
@@ -234,39 +252,26 @@ export function StatisticsPanel({
 
             <div className="flex-1 relative overflow-auto content-area">
               <TabsContent value="overview" className="p-6 absolute inset-0">
-                <div className="h-full overflow-auto relative">
-                  <OverviewTable 
-                    data={overviewData} 
-                    isLoading={isLoadingOverview}
-                  />
-                </div>
+                {tabContents.overview}
               </TabsContent>
 
               <TabsContent value="engagement" className="p-6 absolute inset-0">
-                Engagement content
+                {tabContents.engagement}
               </TabsContent>
 
               <TabsContent value="funnel" className="p-6 absolute inset-0">
-                Funnel content
+                {tabContents.funnel}
               </TabsContent>
 
               <TabsContent value="revenue" className="p-6 absolute inset-0">
-                <div className="h-full overflow-auto">
-                  <RevenueAnalysis 
-                    data={testData} 
-                    isLoading={isLoadingOverview}
-                  />
-                </div>
+                {tabContents.revenue}
               </TabsContent>
 
               <TabsContent 
                 value="raw" 
                 className="absolute inset-0 overflow-hidden"
               >
-                <RawDataTable 
-                  data={testData} 
-                  currency={testData.currency || currency}
-                />
+                {tabContents.raw}
               </TabsContent>
             </div>
           </Tabs>
