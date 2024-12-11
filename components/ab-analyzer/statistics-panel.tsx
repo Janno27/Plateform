@@ -1,4 +1,3 @@
-// statistics-panel.tsx
 "use client"
 
 import * as React from "react"
@@ -9,11 +8,11 @@ import { cn } from "@/lib/utils"
 import { RawDataTable } from "./raw-data-table"
 import { OverviewTable } from "./overview-table"
 import { RevenueAnalysis } from "./revenue-analysis"
-import { ClipboardEdit } from "lucide-react"
+import { ClipboardEdit, MessageSquare } from "lucide-react"
 import { AnalysisPanel } from "./analysis-panel"
 import { Button } from "@/components/ui/button"
 import { AnalysisToolsMenu } from "./analysis-tools-menu"
-import { CommentBox } from "./comment-box"
+import { AnalysisSidebar } from "./analysis-sidebar"
 
 interface StatisticsPanelProps {
   testData: {
@@ -27,15 +26,7 @@ interface StatisticsPanelProps {
   }
   results: any
   isCollapsed: boolean
-  onToolSelect: (tool: "comment" | "highlight" | "screenshot", position: { x: number; y: number }) => void
-}
-
-interface AnalysisNote {
-  id: string
-  type: "comment" | "highlight" | "screenshot"
-  content: string
-  position: { x: number; y: number }
-  timestamp: number
+  onToolSelect: (tool: "comment" | "highlight" | "screenshot", data: { content: string }) => void
 }
 
 export function StatisticsPanel({
@@ -50,10 +41,41 @@ export function StatisticsPanel({
   const [isLoadingOverview, setIsLoadingOverview] = React.useState(false)
   const [analysisTable, setAnalysisTable] = React.useState<any>(null)
   const [isAnalysisMode, setIsAnalysisMode] = React.useState(false)
-  const [selectedTool, setSelectedTool] = React.useState<"comment" | "highlight" | "screenshot" | null>(null)
-  const [commentPosition, setCommentPosition] = React.useState({ x: 0, y: 0 })
-  const [notes, setNotes] = React.useState<AnalysisNote[]>([])
+  const [isSidebarOpen, setIsSidebarOpen] = React.useState(false)
+  const [notes, setNotes] = React.useState<any[]>([])
   const [activeTab, setActiveTab] = React.useState("overview")
+
+  const revenueAnalysis = React.useMemo(() => (
+    <RevenueAnalysis 
+      data={testData} 
+      isLoading={isLoadingOverview}
+    />
+  ), [testData, isLoadingOverview])
+
+  // Mémorisation des contenus des tabs
+  const tabContents = React.useMemo(() => ({
+    overview: (
+      <div className="h-full overflow-auto relative">
+        <OverviewTable 
+          data={overviewData} 
+          isLoading={isLoadingOverview}
+        />
+      </div>
+    ),
+    engagement: <div>Engagement content</div>,
+    funnel: <div>Funnel content</div>,
+    revenue: (
+      <div className="h-full overflow-auto">
+        {revenueAnalysis}
+      </div>
+    ),
+    raw: (
+      <RawDataTable 
+        data={testData} 
+        currency={testData.currency || currency}
+      />
+    )
+  }), [overviewData, isLoadingOverview, testData, currency, revenueAnalysis])
 
   const fetchOverviewData = React.useCallback(async () => {
     try {
@@ -88,87 +110,32 @@ export function StatisticsPanel({
     }
   }, [testData])
 
-  const createAnalysisTable = React.useCallback(async () => {
-    try {
-      const response = await fetch('http://localhost:8000/create-analysis', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(testData?.analysisData),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to create analysis table')
-      }
-
-      const result = await response.json()
-      if (result.success) {
-        setAnalysisTable(result.data)
-        
-        // Affichage de la table virtuelle dans la console du navigateur
-        console.group('=== VIRTUAL ANALYSIS TABLE ===')
-        console.log('Structure:')
-        console.log('Total rows:', result.data.length)
-        console.log('Columns:', Object.keys(result.data[0]))
-        console.log('\nFirst 10 rows:')
-        console.table(result.data.slice(0, 10))
-        console.groupEnd()
-      }
-    } catch (error) {
-      // Silent error
-    }
-  }, [testData])
+  React.useEffect(() => {
+    fetchOverviewData()
+  }, [fetchOverviewData])
 
   React.useEffect(() => {
-    if (testData?.analysisData?.raw_data?.overall) {
-      fetchOverviewData()
-    }
-  }, [testData, fetchOverviewData])
-
-  React.useEffect(() => {
-    if (testData?.analysisData) {
-      createAnalysisTable()
-    }
-  }, [testData, createAnalysisTable])
-
-  React.useEffect(() => {
-    try {
-      const savedNotes = localStorage.getItem("analysis-notes")
-      if (savedNotes) {
-        const parsedNotes = JSON.parse(savedNotes)
-        setNotes(parsedNotes)
+    const loadNotes = () => {
+      try {
+        const savedNotes = localStorage.getItem("analysis-comments")
+        if (savedNotes) {
+          const parsedNotes = JSON.parse(savedNotes)
+          setNotes(parsedNotes)
+        }
+      } catch (error) {
+        console.error("Erreur lors du chargement des notes:", error)
+        setNotes([])
       }
-    } catch (error) {
-      console.error("Erreur lors du chargement des notes:", error)
-      // Réinitialiser les notes si le JSON est invalide
-      localStorage.setItem("analysis-notes", JSON.stringify([]))
     }
-  }, [])
 
-  const handleToolSelect = (tool: "comment" | "highlight" | "screenshot", position: { x: number, y: number }) => {
-    setSelectedTool(tool)
-    setCommentPosition(position)
-  }
-
-  const handleSaveComment = (comment: string) => {
-    const newNote: AnalysisNote = {
-      id: Date.now().toString(),
-      type: selectedTool!,
-      content: comment,
-      position: commentPosition,
-      timestamp: Date.now()
-    }
-    
-    const updatedNotes = [...notes, newNote]
-    setNotes(updatedNotes)
-    localStorage.setItem("analysis-notes", JSON.stringify(updatedNotes))
-    setSelectedTool(null)
-  }
+    loadNotes()
+    window.addEventListener('storage', loadNotes)
+    return () => window.removeEventListener('storage', loadNotes)
+  }, [isAnalysisMode])
 
   return (
     <div className="h-full relative">
-      <AnalysisToolsMenu onSelectTool={handleToolSelect} isAnalysisMode={isAnalysisMode}>
+      <AnalysisToolsMenu onSelectTool={onToolSelect} isAnalysisMode={isAnalysisMode} activeTab={activeTab} filters={filters}>
         <Card 
           className={cn(
             "h-full",
@@ -180,11 +147,12 @@ export function StatisticsPanel({
             isAnalysisMode && [
               "w-full relative",
               "ring-1 ring-primary",
+              "mt-5"
             ]
           )}
         >
           {isAnalysisMode && (
-            <div className="absolute -top-5 right-4 z-10 bg-primary text-primary-foreground px-3 py-1 rounded-t-lg text-xs font-medium shadow-sm">
+            <div className="absolute -top-5 right-4 z-10 bg-primary text-primary-foreground px-3 py-1 rounded-t-lg text-xs font-medium">
               Analysis Mode
             </div>
           )}
@@ -205,84 +173,73 @@ export function StatisticsPanel({
                 <TabsTrigger value="revenue">Revenue</TabsTrigger>
                 <TabsTrigger value="raw">Raw</TabsTrigger>
               </TabsList>
-              
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setIsAnalysisMode(!isAnalysisMode)}
-                className={cn(
-                  "ml-auto relative",
-                  isAnalysisMode && [
-                    "bg-primary/10 hover:bg-primary/20",
-                    "after:content-['Analysis_Mode']",
-                    "after:absolute after:right-full after:-translate-x-2",
-                    "after:text-xs after:font-medium after:text-primary/70",
-                    "after:px-2 after:py-1 after:rounded-md",
-                    "after:whitespace-nowrap",
-                  ]
-                )}
-              >
-                <ClipboardEdit className={cn(
-                  "h-4 w-4",
-                  isAnalysisMode && "text-primary"
-                )} />
+
+              <div className="flex items-center gap-2">
                 {isAnalysisMode && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-primary rounded-full animate-pulse" />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsSidebarOpen(true)}
+                    className="relative"
+                  >
+                    <MessageSquare className="h-4 w-4" />
+                    <span className="absolute -top-1 -right-1 text-[10px] bg-primary text-primary-foreground w-4 h-4 flex items-center justify-center rounded-full">
+                      {notes.length}
+                    </span>
+                  </Button>
                 )}
-              </Button>
+
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setIsAnalysisMode(!isAnalysisMode)}
+                  className={cn(
+                    "relative",
+                    isAnalysisMode && [
+                      "bg-primary/10 hover:bg-primary/20"
+                    ]
+                  )}
+                >
+                  <ClipboardEdit className={cn(
+                    "h-4 w-4",
+                    isAnalysisMode && "text-primary"
+                  )} />
+                </Button>
+              </div>
             </div>
 
             <div className="flex-1 relative overflow-auto content-area">
               <TabsContent value="overview" className="p-6 absolute inset-0">
-                <div className="h-full overflow-auto relative">
-                  <OverviewTable 
-                    data={overviewData} 
-                    isLoading={isLoadingOverview}
-                  />
-                </div>
+                {tabContents.overview}
               </TabsContent>
 
               <TabsContent value="engagement" className="p-6 absolute inset-0">
-                Engagement content
+                {tabContents.engagement}
               </TabsContent>
 
               <TabsContent value="funnel" className="p-6 absolute inset-0">
-                Funnel content
+                {tabContents.funnel}
               </TabsContent>
 
               <TabsContent value="revenue" className="p-6 absolute inset-0">
-                <div className="h-full overflow-auto">
-                  <RevenueAnalysis 
-                    data={testData} 
-                    isLoading={isLoadingOverview}
-                  />
-                </div>
+                {tabContents.revenue}
               </TabsContent>
 
               <TabsContent 
                 value="raw" 
                 className="absolute inset-0 overflow-hidden"
               >
-                <RawDataTable 
-                  data={testData} 
-                  currency={testData.currency || currency}
-                />
+                {tabContents.raw}
               </TabsContent>
             </div>
           </Tabs>
         </Card>
       </AnalysisToolsMenu>
 
-      {selectedTool && isAnalysisMode && (
-        <div className="absolute inset-0 pointer-events-none">
-          <CommentBox
-            position={commentPosition}
-            type={selectedTool}
-            onSave={handleSaveComment}
-            onClose={() => setSelectedTool(null)}
-          />
-        </div>
-      )}
+      <AnalysisSidebar 
+        open={isSidebarOpen} 
+        onClose={() => setIsSidebarOpen(false)} 
+      />
     </div>
   )
 }

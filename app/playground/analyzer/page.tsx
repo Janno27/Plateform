@@ -2,7 +2,6 @@
 
 import { ABAnalyzer } from "@/components/ab-analyzer"
 import { StatisticsPanel } from "@/components/ab-analyzer/statistics-panel"
-import { CommentBox } from "@/components/ab-analyzer/comment-box"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
 
@@ -34,10 +33,9 @@ export default function AnalyzerPage() {
   const [transactionData, setTransactionData] = useState<FileData | null>(null)
   const [results, setResults] = useState<any>(null)
   const [isSummaryCollapsed, setIsSummaryCollapsed] = useState(false)
-  const [activeComment, setActiveComment] = useState<{
-    tool: "comment" | "highlight" | "screenshot"
-    position: CommentPosition
-  } | null>(null)
+  const [selectedTool, setSelectedTool] = useState<"comment" | "highlight" | "screenshot" | null>(null)
+  const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 })
+  const [isAnalysisMode, setIsAnalysisMode] = useState(false)
 
   const handleAnalysisStart = async (data: any) => {
     setShowAnalysis(true)
@@ -65,21 +63,19 @@ export default function AnalyzerPage() {
     // Re-analyser les données avec les nouveaux filtres
   }
 
-  const handleToolSelect = (tool: "comment" | "highlight" | "screenshot", position: CommentPosition) => {
-    setActiveComment({ tool, position })
+  const handleToolSelect = (tool: "comment" | "highlight" | "screenshot", position: { x: number, y: number }) => {
+    setSelectedTool(tool)
+    setCommentPosition(position)
   }
 
-  const handleCommentSave = async (comment: string) => {
-    if (!activeComment) return
-
-    // Ici vous pourriez sauvegarder le commentaire avec sa position
+  const handleSaveComment = (comment: string) => {
+    // Logique de sauvegarde
     console.log('Saving comment:', {
-      type: activeComment.tool,
+      type: selectedTool,
       content: comment,
-      position: activeComment.position
+      position: commentPosition
     })
-
-    setActiveComment(null)
+    setSelectedTool(null)
   }
 
   return (
@@ -120,24 +116,6 @@ export default function AnalyzerPage() {
             results={results}
             isCollapsed={isSummaryCollapsed}
             onToolSelect={handleToolSelect}
-          />
-        </div>
-      )}
-
-      {/* Boîte de commentaire flottante */}
-      {activeComment && (
-        <div className="fixed inset-0 pointer-events-none z-50">
-          <CommentBox
-            className="absolute pointer-events-auto"
-            style={{
-              position: 'fixed',
-              left: `${activeComment.position.x}px`,
-              top: `${activeComment.position.y}px`,
-              transform: 'translate(-50%, -50%)'
-            }}
-            type={activeComment.tool}
-            onSave={handleCommentSave}
-            onClose={() => setActiveComment(null)}
           />
         </div>
       )}

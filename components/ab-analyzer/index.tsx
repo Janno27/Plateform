@@ -14,7 +14,7 @@ interface ABAnalyzerProps {
     device_category: string[]
     item_category2: string[]
   }
-  onFilterChange: (filterType: string, value: string) => void
+  onFilterChange: (filterType: keyof Filter, value: string) => void
   onCollapse: (collapsed: boolean) => void
 }
 
