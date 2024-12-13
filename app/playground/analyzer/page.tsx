@@ -4,6 +4,7 @@ import { ABAnalyzer } from "@/components/ab-analyzer"
 import { StatisticsPanel } from "@/components/ab-analyzer/statistics-panel"
 import { useState } from "react"
 import { cn } from "@/lib/utils"
+import { ChatAnalytics } from "@/components/ab-analyzer/chat-analytics"
 
 interface FileData {
   name: string
@@ -36,6 +37,7 @@ export default function AnalyzerPage() {
   const [selectedTool, setSelectedTool] = useState<"comment" | "highlight" | "screenshot" | null>(null)
   const [commentPosition, setCommentPosition] = useState({ x: 0, y: 0 })
   const [isAnalysisMode, setIsAnalysisMode] = useState(false)
+  const [isChatOpen, setIsChatOpen] = useState(false)
 
   const handleAnalysisStart = async (data: any) => {
     setShowAnalysis(true)
@@ -79,35 +81,51 @@ export default function AnalyzerPage() {
   }
 
   return (
-    <div className="flex h-full max-w-[1600px] mx-auto p-6 gap-6 relative">
-      <div className={cn(
-        "transition-all duration-300 min-w-[400px] h-full",
-        isSummaryCollapsed ? "w-[200px]" :
-        processStep === 'analyzed' && !showAnalysis 
-          ? "w-full" 
-          : showAnalysis 
-            ? "w-[30%]" 
-            : "w-[400px]"
-      )}>
-        <ABAnalyzer 
-          onAnalysisStart={(data) => {
-            setShowAnalysis(true)
-            setTestData(data)
-          }}
-          onProcessStepChange={setProcessStep}
-          showAnalysis={showAnalysis}
-          currency={currency}
-          onCurrencyChange={handleCurrencyChange}
-          filters={filters}
-          onFilterChange={handleFilterChange}
-          onCollapse={setIsSummaryCollapsed}
-        />
-      </div>
+    <div className="flex h-full max-w-[1600px] mx-auto p-6 relative gap-4">
+      {(!isChatOpen || !showAnalysis) && (
+        <div className={cn(
+          "transition-all duration-300",
+          processStep === 'analyzed' && !showAnalysis 
+            ? "w-full" 
+            : isSummaryCollapsed 
+              ? "w-[200px]" 
+              : "w-[400px]",
+          "shrink-0 h-[calc(100vh-3rem)]",
+          "animate-in slide-in-from-left"
+        )}>
+          <ABAnalyzer 
+            onAnalysisStart={handleAnalysisStart}
+            onProcessStepChange={setProcessStep}
+            showAnalysis={showAnalysis}
+            currency={currency}
+            onCurrencyChange={handleCurrencyChange}
+            filters={filters}
+            onFilterChange={handleFilterChange}
+            onCollapse={setIsSummaryCollapsed}
+          />
+        </div>
+      )}
+
+      {isChatOpen && showAnalysis && (
+        <div className={cn(
+          "w-[400px] shrink-0",
+          "h-[calc(100vh-3rem)]",
+          "transition-all duration-300",
+          "animate-in slide-in-from-left"
+        )}>
+          <ChatAnalytics
+            testData={testData}
+            onClose={() => setIsChatOpen(false)}
+            className="h-full"
+          />
+        </div>
+      )}
       
       {showAnalysis && (
         <div className={cn(
-          "flex-1 transition-all duration-300 transform",
-          "animate-in slide-in-from-right"
+          "flex-1 h-full",
+          "transition-all duration-300",
+          isSummaryCollapsed ? "ml-0" : "ml-6"
         )}>
           <StatisticsPanel 
             testData={testData}
@@ -116,6 +134,7 @@ export default function AnalyzerPage() {
             results={results}
             isCollapsed={isSummaryCollapsed}
             onToolSelect={handleToolSelect}
+            onChatToggle={setIsChatOpen}
           />
         </div>
       )}

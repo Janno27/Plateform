@@ -31,12 +31,19 @@ export function ABAnalyzer({
   const [isSummaryCollapsed, setIsSummaryCollapsed] = useState(false)
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="p-6">
+    <div className={cn(
+      "flex flex-col h-full",
+      "overflow-hidden" // Ajout pour contrôler le scroll
+    )}>
+      <div className="p-6 flex-none"> {/* Ajout de flex-none */}
         <h1 className="text-3xl font-bold tracking-tight">A/B Test Analyzer</h1>
       </div>
 
-      <div className="flex-1 px-6">
+      <div className={cn(
+        "flex-1 px-6",
+        "min-h-0", // Ajout pour permettre le scroll dans TestSummary
+        "overflow-hidden" // Ajout pour contrôler le scroll
+      )}>
         <TestSummary 
           onCollapse={onCollapse} 
           onAnalysisStart={onAnalysisStart}
@@ -50,4 +57,4 @@ export function ABAnalyzer({
       </div>
     </div>
   )
-} 
+}

@@ -8,11 +8,12 @@ import { cn } from "@/lib/utils"
 import { RawDataTable } from "./raw-data-table"
 import { OverviewTable } from "./overview-table"
 import { RevenueAnalysis } from "./revenue-analysis"
-import { ClipboardEdit, MessageSquare } from "lucide-react"
+import { ClipboardEdit, MessageSquare, Bot } from "lucide-react"
 import { AnalysisPanel } from "./analysis-panel"
 import { Button } from "@/components/ui/button"
 import { AnalysisToolsMenu } from "./analysis-tools-menu"
 import { AnalysisSidebar } from "./analysis-sidebar"
+import { ChatAnalytics } from "./chat-analytics"
 
 interface StatisticsPanelProps {
   testData: {
@@ -27,6 +28,7 @@ interface StatisticsPanelProps {
   results: any
   isCollapsed: boolean
   onToolSelect: (tool: "comment" | "highlight" | "screenshot", data: { content: string }) => void
+  onChatToggle: (isOpen: boolean) => void
 }
 
 export function StatisticsPanel({
@@ -35,7 +37,8 @@ export function StatisticsPanel({
   filters,
   results,
   isCollapsed,
-  onToolSelect
+  onToolSelect,
+  onChatToggle
 }: StatisticsPanelProps) {
   const [overviewData, setOverviewData] = React.useState<any>(null)
   const [isLoadingOverview, setIsLoadingOverview] = React.useState(false)
@@ -44,6 +47,7 @@ export function StatisticsPanel({
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(false)
   const [notes, setNotes] = React.useState<any[]>([])
   const [activeTab, setActiveTab] = React.useState("overview")
+  const [isChatOpen, setIsChatOpen] = React.useState(false)
 
   const revenueAnalysis = React.useMemo(() => (
     <RevenueAnalysis 
@@ -133,19 +137,31 @@ export function StatisticsPanel({
     return () => window.removeEventListener('storage', loadNotes)
   }, [isAnalysisMode])
 
+  const handleChatToggle = () => {
+    setIsChatOpen(!isChatOpen)
+    onChatToggle(!isChatOpen)
+  }
+
+  const handleAnalysisModeToggle = () => {
+    const newMode = !isAnalysisMode
+    setIsAnalysisMode(newMode)
+    if (!newMode) {
+      setIsChatOpen(false)
+      onChatToggle(false)
+    }
+  }
+
   return (
     <div className="h-full relative">
       <AnalysisToolsMenu onSelectTool={onToolSelect} isAnalysisMode={isAnalysisMode} activeTab={activeTab} filters={filters}>
         <Card 
           className={cn(
-            "h-full",
+            "h-full w-full",
             "transition-all duration-300",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0",
-            "data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right",
-            isCollapsed ? "w-[calc(100%-200px)]" : "w-full",
             isAnalysisMode && [
-              "w-full relative",
+              "relative",
               "ring-1 ring-primary",
               "mt-5"
             ]
@@ -160,10 +176,15 @@ export function StatisticsPanel({
           <Tabs 
             value={activeTab} 
             onValueChange={setActiveTab} 
-            className="h-full flex flex-col"
+            className={cn(
+              "h-full flex flex-col",
+              "relative",
+              "overflow-hidden"
+            )}
           >
             <div className={cn(
               "flex items-center justify-between border-b px-6 py-4 shrink-0",
+              "sticky top-0 bg-background z-10",
               isAnalysisMode && "bg-primary/5"
             )}>
               <TabsList>
@@ -176,23 +197,43 @@ export function StatisticsPanel({
 
               <div className="flex items-center gap-2">
                 {isAnalysisMode && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setIsSidebarOpen(true)}
-                    className="relative"
-                  >
-                    <MessageSquare className="h-4 w-4" />
-                    <span className="absolute -top-1 -right-1 text-[10px] bg-primary text-primary-foreground w-4 h-4 flex items-center justify-center rounded-full">
-                      {notes.length}
-                    </span>
-                  </Button>
+                  <>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setIsSidebarOpen(true)}
+                        className="relative"
+                      >
+                        <MessageSquare className="h-4 w-4" />
+                        <span className="absolute -top-1 -right-1 text-[10px] bg-primary text-primary-foreground w-4 h-4 flex items-center justify-center rounded-full">
+                          {notes.length}
+                        </span>
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleChatToggle}
+                        className={cn(
+                          "relative",
+                          isChatOpen && "bg-primary/10 hover:bg-primary/20"
+                        )}
+                      >
+                        <Bot className={cn(
+                          "h-4 w-4",
+                          isChatOpen && "text-primary"
+                        )} />
+                      </Button>
+                    </div>
+
+                    <div className="w-px h-4 bg-border mx-2" />
+                  </>
                 )}
 
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => setIsAnalysisMode(!isAnalysisMode)}
+                  onClick={handleAnalysisModeToggle}
                   className={cn(
                     "relative",
                     isAnalysisMode && [

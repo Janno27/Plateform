@@ -92,3 +92,22 @@ body {
     @apply bg-background text-foreground;
   }
 }
+@layer utilities {
+  .slide-enter {
+    transform: translateX(-100%);
+    transition: transform 0.3s ease-in-out;
+  }
+
+  .slide-enter-active {
+    transform: translateX(0);
+  }
+
+  .slide-exit {
+    transform: translateX(0);
+    transition: transform 0.3s ease-in-out;
+  }
+
+  .slide-exit-active {
+    transform: translateX(-100%);
+  }
+}

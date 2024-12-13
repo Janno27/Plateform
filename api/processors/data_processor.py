@@ -116,17 +116,28 @@ class DataProcessor:
             # Définir les colonnes à garder la première valeur
             first_value_columns = ['variation', 'device_category']
             
-            # Définir les colonnes à concaténer
-            concat_columns = ['item_category2', 'item_name', 'item_bundle', 'item_name_simple']
+            # Définir les colonnes à concaténer (uniquement celles qui existent)
+            available_concat_columns = []
+            optional_columns = ['item_category2', 'item_name', 'item_bundle', 'item_name_simple']
+            for col in optional_columns:
+                if col in df.columns:
+                    available_concat_columns.append(col)
 
-            # Créer le dictionnaire d'agrégation
+            # Créer le dictionnaire d'agrégation avec les colonnes disponibles
             agg_dict = {
                 'revenue': 'sum',
                 'quantity': 'sum',
-                'unique_products': 'count',  # Compte le nombre de produits uniques
-                **{col: 'first' for col in first_value_columns},
-                **{col: lambda x: self._limit_concatenated_items(x) for col in concat_columns}
+                'unique_products': 'count'  # Compte le nombre de produits uniques
             }
+
+            # Ajouter les colonnes de première valeur si elles existent
+            for col in first_value_columns:
+                if col in df.columns:
+                    agg_dict[col] = 'first'
+
+            # Ajouter les colonnes à concaténer si elles existent
+            for col in available_concat_columns:
+                agg_dict[col] = lambda x: self._limit_concatenated_items(x)
 
             # Grouper par transaction_id
             grouped = df.groupby('transaction_id').agg(agg_dict).reset_index()

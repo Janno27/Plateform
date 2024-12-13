@@ -315,7 +315,7 @@ export function TestSummary({ onCollapse, onAnalysisStart, onProcessStepChange, 
   return (
     <Card className={cn(
       "h-full bg-muted/10 transition-all duration-300",
-      isCollapsed ? "w-[200px]" : "w-full"
+      "w-full"
     )}>
       <Input 
         ref={fileInputRef}

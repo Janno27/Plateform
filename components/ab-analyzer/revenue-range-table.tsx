@@ -1152,7 +1152,7 @@ export function RevenueRangeTable({
                                               "text-sm",
                                               getPointDifferenceColor(diff)
                                             )}>
-                                              {formatDiff(diff)}
+                                              {diff > 0 ? `+${diff.toFixed(1)}%` : `${diff.toFixed(1)}%`}
                                             </div>
                                           </TooltipTrigger>
                                           <TooltipContent 
@@ -1163,16 +1163,19 @@ export function RevenueRangeTable({
                                           >
                                             <ConfidenceTooltip
                                               title="Mann-Whitney U Test"
-                                              description="Non-parametric test comparing AOV distributions within this quantity range."
+                                              description="Non-parametric test comparing revenue distributions for this quantity range."
                                               methodUsed="stats.mannwhitneyu() with alternative='two-sided'"
                                               showCalculationDetails={true}
                                               confidenceInterval={{
                                                 lower: diff - 2,
                                                 upper: diff + 2,
-                                                metric: 'AOV Distribution'
+                                                metric: 'Revenue Distribution'
                                               }}
                                               confidenceData={{
-                                                value: 95,
+                                                value: calculateMannWhitneyConfidence(
+                                                  transactions.map(t => t.revenue),
+                                                  controlTransactions.map(t => t.revenue)
+                                                ),
                                                 level: getConfidenceLevel(95),
                                                 details: {
                                                   variation: {
@@ -1213,3 +1216,45 @@ export function RevenueRangeTable({
     </div>
   )
 } 
+
+// Ajouter cette fonction helper pour le calcul de la confiance Mann-Whitney
+const calculateMannWhitneyConfidence = (var_data: number[], ctrl_data: number[]): number => {
+  if (var_data.length === 0 || ctrl_data.length === 0) return 0;
+  
+  // Tri des données
+  const combined = [...var_data.map(v => ({ value: v, group: 'var' })), 
+                    ...ctrl_data.map(v => ({ value: v, group: 'ctrl' }))]
+    .sort((a, b) => a.value - b.value);
+  
+  // Calcul des rangs
+  let ranks: {[key: number]: number} = {};
+  for (let i = 0; i < combined.length; i++) {
+    ranks[i] = i + 1;
+  }
+  
+  // Somme des rangs pour la variation
+  const varRankSum = combined
+    .filter(x => x.group === 'var')
+    .reduce((sum, _, i) => sum + ranks[i], 0);
+  
+  // Calcul de U
+  const U = varRankSum - (var_data.length * (var_data.length + 1)) / 2;
+  
+  // Calcul de la confiance (approximation)
+  const mean = (var_data.length * ctrl_data.length) / 2;
+  const std = Math.sqrt((var_data.length * ctrl_data.length * (var_data.length + ctrl_data.length + 1)) / 12);
+  const z = Math.abs((U - mean) / std);
+  
+  // Conversion en confiance
+  const confidence = (1 - 2 * (1 - normalCDF(z))) * 100;
+  
+  return Math.min(Math.max(confidence, 0), 100);
+};
+
+// Fonction helper pour la distribution normale cumulative
+const normalCDF = (x: number): number => {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989423 * Math.exp(-x * x / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x > 0 ? 1 - p : p;
+};
