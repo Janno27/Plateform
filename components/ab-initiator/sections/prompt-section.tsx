@@ -6,13 +6,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Sparkles, X } from "lucide-react";
 
 const EXAMPLE_PROMPTS = [
-  "Context: Des analyses montrent un temps élevé sur la page produit",
-  "Problème: 70% d'abandon sur l'étape de paiement",
-  "AB Test précédent: +15% de conversion avec des avis clients",
-  "Test utilisateur: Difficulté à trouver le bouton d'achat",
-  "Design: Nouveau composant de recommandation produit",
-  "KPI: Améliorer le taux de conversion de 2%",
-  "Impact: Réduire le temps de complétion du tunnel de 20%"
+  "Context: High bounce rate detected in funnel analysis",
+  "Previous Test: +22% CTR with social proof elements",
+  "User Research: Navigation confusion in mobile app",
+  "Design Concept: New product card layout",
+  "Goal: Increase Add-to-Cart conversion by 5%",
+  "Pain Point: Cart abandonment at shipping step",
+  "Hypothesis: Simplified checkout will boost sales"
 ];
 
 export function PromptSection() {
@@ -31,7 +31,7 @@ export function PromptSection() {
   };
 
   return (
-    <div className="w-1/2 space-y-8">
+    <div className="w-[600px] space-y-8">
       <div className="text-center space-y-2">
         <h1 className="text-4xl font-semibold tracking-tight text-foreground">
           What do you want to test?
@@ -44,7 +44,7 @@ export function PromptSection() {
       <div className="relative w-full bg-background rounded-lg border shadow-sm">
         <div className="relative">
           <Textarea
-            placeholder="Describe what you want to test... (e.g., Context: Our analysis shows high bounce rates on product pages. Problem: Users spend too much time searching for size information. Potential Solution: We want to test a new size guide component prominently displayed...)"
+            placeholder="Describe your test idea... (e.g., Our analytics show users spending too much time on product pages. Previous tests indicate sizing information is a key factor. We want to test a new interactive size guide to improve decision speed...)"
             className="min-h-[300px] text-base resize-none pr-24 border-none focus-visible:ring-1 focus-visible:ring-offset-0"
             value={promptText}
             onChange={(e) => setPromptText(e.target.value)}

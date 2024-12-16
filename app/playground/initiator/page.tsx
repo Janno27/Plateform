@@ -5,7 +5,7 @@ import { PromptSection } from '@/components/ab-initiator/sections/prompt-section
 
 export default function ABInitiatorPage() {
   return (
-    <div className="relative min-h-screen w-full">
+    <main className="flex min-h-[calc(100vh-65px)] flex-col">
       {/* Light mode background */}
       <div className="absolute inset-0 bg-gradient-to-b from-gray-50 to-white dark:from-transparent dark:to-transparent">
         <div className="absolute inset-0 bg-grid-black/[0.02] dark:bg-grid-white/[0.02]" />
@@ -17,9 +17,9 @@ export default function ABInitiatorPage() {
       </div>
       
       {/* Content */}
-      <div className="relative z-10 flex min-h-screen flex-col items-center justify-center p-4">
+      <div className="relative flex-1 flex items-center justify-center px-4">
         <PromptSection />
       </div>
-    </div>
+    </main>
   );
 }
