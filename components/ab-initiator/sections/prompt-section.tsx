@@ -31,8 +31,8 @@ export function PromptSection() {
   };
 
   return (
-    <div className="w-full max-w-[720px] mx-auto">
-      <div className="text-center space-y-2 mb-8">
+    <div className="w-full max-w-[720px] mx-auto h-fit py-12">
+      <div className="text-center space-y-2 mb-12">
         <h1 className="text-4xl font-semibold tracking-tight text-foreground">
           What do you want to test?
         </h1>
@@ -41,21 +41,21 @@ export function PromptSection() {
         </p>
       </div>
 
-      <div className="relative w-full bg-background rounded-lg border shadow-sm">
+      <div className="relative w-full bg-background rounded-xl border shadow-sm p-6">
         <div className="relative">
           <Textarea
-            placeholder="Describe your test idea... (e.g., Our analytics show users spending too much time on product pages. Previous tests indicate sizing information is a key factor. We want to test a new interactive size guide to improve decision speed...)"
-            className="min-h-[300px] text-base resize-none pr-24 border-none focus-visible:ring-1 focus-visible:ring-offset-0"
+            placeholder="Describe your test idea... e.g., Users spend too long finding size info on product pages. We want to test a new size guide to improve decision speed."
+            className="min-h-[400px] text-base resize-none border-none bg-transparent p-0 focus-visible:ring-0 focus-visible:ring-offset-0"
             value={promptText}
             onChange={(e) => setPromptText(e.target.value)}
           />
           
-          <div className="absolute right-3 top-3 flex gap-2">
+          <div className="absolute top-0 right-0 flex gap-2">
             {promptText && (
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-8 w-8 hover:bg-muted/50"
                 onClick={handleClear}
               >
                 <X className="h-4 w-4" />
@@ -64,10 +64,10 @@ export function PromptSection() {
           </div>
 
           {promptText && (
-            <div className="absolute bottom-3 right-3">
+            <div className="absolute bottom-0 right-0">
               <Button
                 size="default"
-                className="bg-primary hover:bg-primary/90 px-4"
+                className="bg-primary hover:bg-primary/90 px-4 shadow-md"
                 onClick={handleGenerate}
               >
                 <Sparkles className="w-4 h-4" />
@@ -77,7 +77,7 @@ export function PromptSection() {
         </div>
       </div>
 
-      <div className="space-y-4 mt-8">
+      <div className="space-y-4 mt-12">
         <p className="text-sm text-muted-foreground flex items-center justify-center gap-2">
           <Sparkles className="w-4 h-4" />
           Powered by AI for better decisions
