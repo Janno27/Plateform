@@ -31,8 +31,8 @@ export function PromptSection() {
   };
 
   return (
-    <div className="w-full max-w-[720px] mx-auto">
-      <div className="text-center space-y-2 mb-8">
+    <div className="space-y-6">
+      <div className="text-center space-y-2">
         <h1 className="text-4xl font-semibold tracking-tight text-foreground">
           What do you want to test?
         </h1>
@@ -41,59 +41,57 @@ export function PromptSection() {
         </p>
       </div>
 
-      <div className="space-y-8">
-        <div className="relative w-full bg-background rounded-xl border shadow-sm">
-          <div className="relative p-6">
-            <Textarea
-              placeholder="Describe your test idea... e.g., Users spend too long finding size info on product pages. We want to test a new size guide to improve decision speed."
-              className="min-h-[400px] text-base resize-none border-none bg-transparent p-0 focus-visible:ring-0 focus-visible:ring-offset-0 pr-12"
-              value={promptText}
-              onChange={(e) => setPromptText(e.target.value)}
-            />
+      <div className="relative w-full bg-background rounded-xl border shadow-sm">
+        <div className="relative p-4">
+          <Textarea
+            placeholder="Describe your test idea... e.g., Users spend too long finding size info on product pages. We want to test a new size guide to improve decision speed."
+            className="min-h-[200px] text-base resize-none border-none bg-transparent p-0 focus-visible:ring-0 focus-visible:ring-offset-0 pr-12"
+            value={promptText}
+            onChange={(e) => setPromptText(e.target.value)}
+          />
+          
+          {/* CTA buttons */}
+          <div className="absolute bottom-1 right-1 flex gap-2 items-center">
+            {promptText && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 hover:bg-muted/50"
+                onClick={handleClear}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
             
-            {/* CTA buttons */}
-            <div className="absolute bottom-6 right-6 flex gap-2 items-center">
-              {promptText && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 hover:bg-muted/50"
-                  onClick={handleClear}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
-              
-              {promptText && (
-                <Button
-                  size="default"
-                  className="bg-primary hover:bg-primary/90 px-4 shadow-sm"
-                  onClick={handleGenerate}
-                >
-                  <Sparkles className="w-4 h-4" />
-                </Button>
-              )}
-            </div>
+            {promptText && (
+              <Button
+                size="default"
+                className="bg-primary hover:bg-primary/90 px-4 shadow-sm"
+                onClick={handleGenerate}
+              >
+                <Sparkles className="w-4 h-4" />
+              </Button>
+            )}
           </div>
         </div>
+      </div>
 
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground flex items-center justify-center gap-2">
-            <Sparkles className="w-4 h-4" />
-            Powered by AI for better decisions
-          </p>
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground flex items-center justify-center gap-2">
+          <Sparkles className="w-4 h-4" />
+          Powered by AI for better decisions
+        </p>
 
-          <div className="flex flex-wrap gap-2 justify-center">
-            {EXAMPLE_PROMPTS.map((prompt, index) => (
-              <button
-                key={index}
-                onClick={() => handlePromptClick(prompt)}
-                className="px-4 py-2 text-sm bg-muted hover:bg-muted/80 text-muted-foreground rounded-full transition-colors"
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
+        <div className="flex flex-wrap gap-2 justify-center">
+          {EXAMPLE_PROMPTS.map((prompt, index) => (
+            <button
+              key={index}
+              onClick={() => handlePromptClick(prompt)}
+              className="px-4 py-2 text-sm bg-muted hover:bg-muted/80 text-muted-foreground rounded-full transition-colors"
+            >
+              {prompt}
+            </button>
+          ))}
         </div>
       </div>
     </div>
