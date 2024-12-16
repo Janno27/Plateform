@@ -31,8 +31,8 @@ export function PromptSection() {
   };
 
   return (
-    <div className="w-[60%] mx-auto space-y-8">
-      <div className="text-center space-y-2">
+    <div className="w-full max-w-[720px] mx-auto">
+      <div className="text-center space-y-2 mb-8">
         <h1 className="text-4xl font-semibold tracking-tight text-foreground">
           What do you want to test?
         </h1>
@@ -77,7 +77,7 @@ export function PromptSection() {
         </div>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-4 mt-8">
         <p className="text-sm text-muted-foreground flex items-center justify-center gap-2">
           <Sparkles className="w-4 h-4" />
           Powered by AI for better decisions
