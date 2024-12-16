@@ -3,6 +3,7 @@
 import React from 'react';
 import ABInitiator from '@/components/ab-initiator';
 import { Separator } from '@/components/ui/separator';
+import { PromptSection } from '@/components/ab-initiator/sections/prompt-section';
 
 export default function ABInitiatorPage() {
   return (
@@ -18,7 +19,9 @@ export default function ABInitiatorPage() {
       <Separator />
       
       <div className="grid gap-4">
-        <ABInitiator />
+        <ABInitiator>
+          <PromptSection />
+        </ABInitiator>
       </div>
     </div>
   );
