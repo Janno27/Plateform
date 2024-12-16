@@ -31,7 +31,7 @@ export function PromptSection() {
   };
 
   return (
-    <div className="w-[600px] space-y-8">
+    <div className="w-[60%] mx-auto space-y-8">
       <div className="text-center space-y-2">
         <h1 className="text-4xl font-semibold tracking-tight text-foreground">
           What do you want to test?
