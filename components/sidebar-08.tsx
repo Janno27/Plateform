@@ -91,7 +91,7 @@ export default function Page({ children }: { children: React.ReactNode }) {
 
   return (
     <SidebarProvider>
-      <Sidebar variant="inset">
+      <Sidebar variant="inset" className="z-50">
         <SidebarHeader>
           <div className="flex items-center justify-between px-4">
             <SidebarMenu>
@@ -326,7 +326,7 @@ export default function Page({ children }: { children: React.ReactNode }) {
           </SidebarMenu>
         </SidebarFooter>
       </Sidebar>
-      <SidebarInset>
+      <SidebarInset className="z-40">
         <header className="flex h-16 shrink-0 items-center gap-2">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
@@ -354,10 +354,11 @@ export default function Page({ children }: { children: React.ReactNode }) {
           </div>
         </header>
         <div className="flex-1">
-          {children}
+          <main className="flex-1 flex flex-col h-[calc(100vh-65px)] items-center justify-center">
+            {children}
+          </main>
         </div>
       </SidebarInset>
     </SidebarProvider>
   )
 }
-
